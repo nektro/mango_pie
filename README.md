@@ -8,7 +8,7 @@ Experiment writing a sort of working HTTP server using:
 # Requirements
 
 * Linux 5.11 minimum
-* [Zig master](https://ziglang.org/download/)
+* [Zig 0.10.0](https://ziglang.org/download/)
 * libcurl and its development files (`libcurl-devel` on Fedora, `libcurl4-openssl-dev` on Debian)
 
 # Building
