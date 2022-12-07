@@ -1,6 +1,5 @@
 const std = @import("std");
 const fmt = std.fmt;
-const mem = std.mem;
 
 const assert = std.debug.assert;
 
@@ -29,11 +28,11 @@ pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
         /// For each SQEs a callback must be obtained via get().
         /// When the server loop is processing CQEs it will use the callback and then release it with put().
         pub const Pool = struct {
-            allocator: mem.Allocator,
+            allocator: std.mem.Allocator,
             nb: usize,
             free_list: ?*Self,
 
-            pub fn init(allocator: mem.Allocator, server: ServerType, nb: usize) !Pool {
+            pub fn init(allocator: std.mem.Allocator, server: ServerType, nb: usize) !Pool {
                 var res = Pool{
                     .allocator = allocator,
                     .nb = nb,

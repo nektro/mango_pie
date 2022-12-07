@@ -1,14 +1,13 @@
 const std = @import("std");
 const heap = std.heap;
 const io = std.io;
-const mem = std.mem;
 
 const c = @cImport({
     @cInclude("curl/curl.h");
 });
 
 pub const Response = struct {
-    allocator: mem.Allocator,
+    allocator: std.mem.Allocator,
 
     response_code: usize,
     data: []const u8,
@@ -18,7 +17,7 @@ pub const Response = struct {
     }
 };
 
-pub fn do(allocator: mem.Allocator, method: []const u8, url: [:0]const u8, body_opt: ?[]const u8) !Response {
+pub fn do(allocator: std.mem.Allocator, method: []const u8, url: [:0]const u8, body_opt: ?[]const u8) !Response {
     _ = method;
 
     if (c.curl_global_init(c.CURL_GLOBAL_ALL) != c.CURLE_OK) {

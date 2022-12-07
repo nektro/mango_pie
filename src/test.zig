@@ -1,7 +1,6 @@
 const std = @import("std");
 const fmt = std.fmt;
 const heap = std.heap;
-const mem = std.mem;
 const net = std.net;
 const os = std.os;
 const testing = std.testing;
@@ -19,7 +18,7 @@ const port = 34450;
 const TestHarness = struct {
     const Self = @This();
 
-    root_allocator: mem.Allocator,
+    root_allocator: std.mem.Allocator,
     arena: heap.ArenaAllocator,
     socket: os.socket_t,
     running: Atomic(bool) = Atomic(bool).init(true),
@@ -33,12 +32,12 @@ const TestHarness = struct {
         try writer.writeAll("0");
     }
 
-    fn create(allocator: mem.Allocator, comptime handler: httpserver.RequestHandler(*Self)) !*TestHarness {
+    fn create(allocator: std.mem.Allocator, comptime handler: httpserver.RequestHandler(*Self)) !*TestHarness {
         const socket = blk: {
             const sockfd = try os.socket(os.AF.INET6, os.SOCK.STREAM, 0);
             errdefer os.close(sockfd);
 
-            os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1))) catch {};
+            os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1))) catch {};
 
             const addr = try net.Address.parseIp6("::0", port);
 
@@ -102,7 +101,7 @@ test "GET 200 OK" {
         var th = try TestHarness.create(
             testing.allocator,
             struct {
-                fn handle(ctx: *TestHarness, per_request_allocator: mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+                fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                     _ = ctx;
                     _ = per_request_allocator;
                     _ = peer;
@@ -145,7 +144,7 @@ test "POST 200 OK" {
     var th = try TestHarness.create(
         testing.allocator,
         struct {
-            fn handle(ctx: *TestHarness, per_request_allocator: mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+            fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = ctx;
                 _ = per_request_allocator;
                 _ = peer;
@@ -185,12 +184,12 @@ test "GET files" {
     var th = try TestHarness.create(
         testing.allocator,
         struct {
-            fn handle(ctx: *TestHarness, per_request_allocator: mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+            fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = ctx;
                 _ = per_request_allocator;
                 _ = peer;
 
-                try testing.expect(mem.startsWith(u8, req.path, "/static"));
+                try testing.expect(std.mem.startsWith(u8, req.path, "/static"));
                 try testing.expect(req.headers.get("Host") != null);
                 try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
                 try testing.expect(req.headers.get("Content-Length") == null);

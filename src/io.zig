@@ -1,6 +1,5 @@
 const std = @import("std");
 const debug = std.debug;
-const mem = std.mem;
 const net = std.net;
 const os = std.os;
 
@@ -76,10 +75,10 @@ pub fn createSocket(port: u16) !os.socket_t {
     errdefer os.close(sockfd);
 
     // Enable reuseaddr if possible
-    os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEPORT, &mem.toBytes(@as(c_int, 1))) catch {};
+    os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1))) catch {};
 
     // Disable IPv6 only
-    try os.setsockopt(sockfd, os.IPPROTO.IPV6, os.linux.IPV6.V6ONLY, &mem.toBytes(@as(c_int, 0)));
+    try os.setsockopt(sockfd, os.IPPROTO.IPV6, os.linux.IPV6.V6ONLY, &std.mem.toBytes(@as(c_int, 0)));
 
     const addr = try net.Address.parseIp6("::0", port);
 

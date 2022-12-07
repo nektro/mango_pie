@@ -5,7 +5,6 @@ const debug = std.debug;
 const fmt = std.fmt;
 const heap = std.heap;
 const io = std.io;
-const mem = std.mem;
 const net = std.net;
 const os = std.os;
 const time = std.time;
@@ -197,7 +196,7 @@ pub const Response = union(enum) {
 };
 
 pub fn RequestHandler(comptime Context: type) type {
-    return *const fn (Context, mem.Allocator, Peer, Request) anyerror!Response;
+    return *const fn (Context, std.mem.Allocator, Peer, Request) anyerror!Response;
 }
 
 const ResponseStateFileDescriptor = union(enum) {
@@ -207,7 +206,7 @@ const ResponseStateFileDescriptor = union(enum) {
     pub fn format(self: ResponseStateFileDescriptor, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
 
-        if (comptime !mem.eql(u8, "s", fmt_string)) @compileError("format string must be s");
+        if (comptime !std.mem.eql(u8, "s", fmt_string)) @compileError("format string must be s");
         switch (self) {
             .direct => |fd| try writer.print("(direct fd={d})", .{fd}),
             .registered => |fd| try writer.print("(registered fd={d})", .{fd}),
@@ -244,7 +243,7 @@ const ClientState = struct {
         };
     };
 
-    gpa: mem.Allocator,
+    gpa: std.mem.Allocator,
 
     /// peer information associated with this client
     peer: Peer,
@@ -265,7 +264,7 @@ const ClientState = struct {
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
 
-    pub fn init(self: *ClientState, allocator: mem.Allocator, peer_addr: net.Address, client_fd: os.socket_t, max_buffer_size: usize) !void {
+    pub fn init(self: *ClientState, allocator: std.mem.Allocator, peer_addr: net.Address, client_fd: os.socket_t, max_buffer_size: usize) !void {
         self.* = .{
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
@@ -333,7 +332,7 @@ pub fn Server(comptime Context: type) type {
         const CallbackType = Callback(*Self, *ClientState);
 
         /// allocator used to allocate each client state
-        root_allocator: mem.Allocator,
+        root_allocator: std.mem.Allocator,
 
         /// uring dedicated to this server object.
         ring: IO_Uring,
@@ -409,7 +408,7 @@ pub fn Server(comptime Context: type) type {
             /// * allocate all client states (including request/response bodies).
             /// * allocate the callback pool
             /// Depending on the workload the allocator can be hit quite often (for example if all clients close their connection).
-            allocator: mem.Allocator,
+            allocator: std.mem.Allocator,
             /// controls the behaviour of the server (max number of connections, max buffer size, etc).
             options: ServerOptions,
             /// owned by the caller and indicates if the server should shutdown properly.

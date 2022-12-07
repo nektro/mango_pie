@@ -3,7 +3,6 @@ const debug = std.debug;
 const fmt = std.fmt;
 const heap = std.heap;
 const io = std.io;
-const mem = std.mem;
 const net = std.net;
 const os = std.os;
 const time = std.time;
@@ -64,16 +63,16 @@ const ServerContext = struct {
     pub fn format(self: *const Self, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
 
-        if (comptime !mem.eql(u8, "s", fmt_string)) @compileError("format string must be s");
+        if (comptime !std.mem.eql(u8, "s", fmt_string)) @compileError("format string must be s");
         try writer.print("{d}", .{self.id});
     }
 
-    fn handleRequest(self: *Self, per_request_allocator: mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+    fn handleRequest(self: *Self, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
         _ = per_request_allocator;
 
         logger.debug("ctx#{d:<4} IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ self.id, peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
 
-        if (mem.startsWith(u8, req.path, "/static")) {
+        if (std.mem.startsWith(u8, req.path, "/static")) {
             return httpserver.Response{
                 .send_file = .{
                     .status_code = .ok,
