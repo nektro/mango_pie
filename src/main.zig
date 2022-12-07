@@ -74,7 +74,7 @@ const ServerContext = struct {
         logger.debug("ctx#{d:<4} IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{
             self.id,
             peer.addr,
-            req.method.toString(),
+            @tagName(req.method),
             req.path,
             req.minor_version,
             req.body,

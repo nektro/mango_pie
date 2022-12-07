@@ -124,7 +124,7 @@ test "GET 200 OK" {
                     _ = peer;
 
                     try testing.expectEqualStrings("/plaintext", req.path);
-                    try testing.expectEqual(httpserver.Method.get, req.method);
+                    try testing.expectEqual(std.http.Method.GET, req.method);
                     try testing.expect(req.headers.get("Host") != null);
                     try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
                     try testing.expect(req.headers.get("Content-Length") == null);
@@ -169,7 +169,7 @@ test "POST 200 OK" {
                 _ = peer;
 
                 try testing.expectEqualStrings("/foobar", req.path);
-                try testing.expectEqual(httpserver.Method.post, req.method);
+                try testing.expectEqual(std.http.Method.POST, req.method);
                 try testing.expect(req.headers.get("Host") != null);
                 try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
                 try testing.expectEqualStrings("application/json", req.headers.get("Content-Type").?.value);
