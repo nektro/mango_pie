@@ -28,7 +28,6 @@ pub fn build(b: *std.build.Builder) void {
     build_options.addOption(bool, "debug_accepts", debug_accepts);
 
     const exe = b.addExecutable("httpserver", "src/main.zig");
-    exe.addPackagePath("args", "third_party/zig-args/args.zig");
     exe.addIncludePath("src");
     exe.setTarget(target);
     exe.setBuildMode(mode);

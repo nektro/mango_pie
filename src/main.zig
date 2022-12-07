@@ -17,8 +17,6 @@ const io_uring_sqe = std.os.linux.io_uring_sqe;
 
 const httpserver = @import("lib.zig");
 
-const argsParser = @import("args");
-
 const logger = std.log.scoped(.main);
 
 var global_running: Atomic(bool) = Atomic(bool).init(true);
@@ -111,21 +109,11 @@ pub fn main() anyerror!void {
 
     //
 
-    const options = try argsParser.parseForCurrentProcess(struct {
-        @"listen-port": u16 = 3405,
-
-        @"max-server-threads": usize = 1,
-        @"max-ring-entries": u13 = 512,
-        @"max-buffer-size": usize = 4096,
-        @"max-connections": usize = 128,
-    }, allocator, .print);
-    defer options.deinit();
-
-    const listen_port = options.options.@"listen-port";
-    const max_server_threads = options.options.@"max-server-threads";
-    const max_ring_entries = options.options.@"max-ring-entries";
-    const max_buffer_size = options.options.@"max-buffer-size";
-    const max_connections = options.options.@"max-connections";
+    const listen_port: u16 = 3405;
+    const max_server_threads: usize = 1;
+    const max_ring_entries: u13 = 512;
+    const max_buffer_size: usize = 4096;
+    const max_connections: usize = 128;
 
     // NOTE(vincent): for debugging
     // var logging_allocator = heap.loggingAllocator(gpa.allocator());
