@@ -1,5 +1,4 @@
 const std = @import("std");
-const fmt = std.fmt;
 const heap = std.heap;
 const net = std.net;
 const os = std.os;
@@ -87,7 +86,7 @@ const TestHarness = struct {
 
     fn do(self: *TestHarness, method: []const u8, path: []const u8, body_opt: ?[]const u8) !curl.Response {
         var buf: [1024]u8 = undefined;
-        const url = try fmt.bufPrintZ(&buf, "http://localhost:{d}{s}", .{ port, path });
+        const url = try std.fmt.bufPrintZ(&buf, "http://localhost:{d}{s}", .{ port, path });
         return curl.do(self.root_allocator, method, url, body_opt);
     }
 };
@@ -153,7 +152,7 @@ test "POST 200 OK" {
                 try testing.expect(req.headers.get("Host") != null);
                 try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
                 try testing.expectEqualStrings("application/json", req.headers.get("Content-Type").?.value);
-                try testing.expectEqual(body.len, try fmt.parseInt(usize, req.headers.get("Content-Length").?.value, 10));
+                try testing.expectEqual(body.len, try std.fmt.parseInt(usize, req.headers.get("Content-Length").?.value, 10));
                 try testing.expectEqualStrings(body, req.body.?);
 
                 return httpserver.Response{ .response = .{

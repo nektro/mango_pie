@@ -2,7 +2,6 @@ const std = @import("std");
 const build_options = @import("build_options");
 const ascii = std.ascii;
 const debug = std.debug;
-const fmt = std.fmt;
 const heap = std.heap;
 const net = std.net;
 const os = std.os;
@@ -112,7 +111,7 @@ const RawRequest = struct {
             if (!std.ascii.eqlIgnoreCase(name, "Content-Length")) {
                 continue;
             }
-            return try fmt.parseInt(usize, value, 10);
+            return try std.fmt.parseInt(usize, value, 10);
         }
         return null;
     }
@@ -952,7 +951,7 @@ pub fn Server(comptime Context: type) type {
                 client.peer.addr,
                 read,
                 client.response_state.file.fd,
-                fmt.fmtSliceEscapeLower(client.temp_buffer[0..read]),
+                std.fmt.fmtSliceEscapeLower(client.temp_buffer[0..read]),
             });
 
             try client.buffer.appendSlice(client.temp_buffer[0..read]);
@@ -978,7 +977,7 @@ pub fn Server(comptime Context: type) type {
                 client.peer.addr,
                 client.response_state.file.path,
                 client.response_state.file.fd,
-                fmt.fmtIntSizeBin(client.response_state.file.statx_buf.size),
+                std.fmt.fmtIntSizeBin(client.response_state.file.statx_buf.size),
             });
 
             // Prepare the preambule + headers.
@@ -1094,7 +1093,7 @@ pub fn Server(comptime Context: type) type {
                     logger.warn("ctx#{s:<4} addr={} no such file or directory, path=\"{s}\"", .{
                         self.user_context,
                         client.peer.addr,
-                        fmt.fmtSliceEscapeLower(client.response_state.file.path),
+                        std.fmt.fmtSliceEscapeLower(client.response_state.file.path),
                     });
 
                     try self.submitWriteNotFound(client);
@@ -1252,10 +1251,10 @@ pub fn Server(comptime Context: type) type {
             logger.debug("ctx#{s:<4} addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
                 self.user_context,
                 client.peer.addr,
-                fmt.fmtIntSizeBin(client.buffer.items.len),
+                std.fmt.fmtIntSizeBin(client.buffer.items.len),
                 fd,
                 offset,
-                fmt.fmtSliceEscapeLower(client.buffer.items),
+                std.fmt.fmtSliceEscapeLower(client.buffer.items),
             });
 
             var tmp = try self.callbacks.get(cb, .{client});
@@ -1263,14 +1262,14 @@ pub fn Server(comptime Context: type) type {
         }
 
         fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, fmt.fmtSliceEscapeLower(path) });
+            logger.debug("ctx#{s:<4} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
             var tmp = try self.callbacks.get(cb, .{client});
             return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
         }
 
         fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, fmt.fmtSliceEscapeLower(path) });
+            logger.debug("ctx#{s:<4} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
             var tmp = try self.callbacks.get(cb, .{client});
             return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);

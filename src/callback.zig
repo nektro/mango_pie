@@ -1,6 +1,4 @@
 const std = @import("std");
-const fmt = std.fmt;
-
 const assert = std.debug.assert;
 
 const io_uring_cqe = std.os.linux.io_uring_cqe;
@@ -142,7 +140,7 @@ pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
 /// Checks that the argument at `idx` has the type `exp`.
 fn expectFuncArgType(comptime args: []const std.builtin.Type.StructField, comptime idx: usize, comptime exp: type) void {
     if (args[idx].field_type != exp) {
-        var msg = fmt.comptimePrint("expected func arg {d} to be of type {s}, got {s}", .{
+        var msg = std.fmt.comptimePrint("expected func arg {d} to be of type {s}, got {s}", .{
             idx,
             @typeName(exp),
             @typeName(args[idx].field_type),
