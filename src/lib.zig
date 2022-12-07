@@ -1,6 +1,5 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const ascii = std.ascii;
 const heap = std.heap;
 const net = std.net;
 const os = std.os;
@@ -47,7 +46,7 @@ pub const Headers = struct {
 
     pub fn get(self: Headers, name: []const u8) ?Header {
         for (self.view) |item| {
-            if (ascii.eqlIgnoreCase(name, item.name)) {
+            if (std.ascii.eqlIgnoreCase(name, item.name)) {
                 return item;
             }
         }
