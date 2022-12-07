@@ -1,5 +1,5 @@
 const std = @import("std");
-const debug = std.debug;
+const assert = std.debug.assert;
 const net = std.net;
 const os = std.os;
 
@@ -59,8 +59,8 @@ pub const RegisteredFileDescriptors = struct {
 
     pub fn release(self: *Self, index: i32) void {
         const idx = @intCast(usize, index);
-        debug.assert(self.states[idx] == .used);
-        debug.assert(self.fds[idx] != -1);
+        assert(self.states[idx] == .used);
+        assert(self.fds[idx] != -1);
         self.states[idx] = .free;
         self.fds[idx] = -1;
     }

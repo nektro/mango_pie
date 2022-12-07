@@ -1,7 +1,6 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const ascii = std.ascii;
-const debug = std.debug;
 const heap = std.heap;
 const net = std.net;
 const os = std.os;
@@ -569,7 +568,7 @@ pub fn Server(comptime Context: type) type {
             const cqe_count = try self.ring.copy_cqes(self.cqes, @intCast(u32, nr));
 
             for (self.cqes[0..cqe_count]) |cqe| {
-                debug.assert(cqe.user_data != 0);
+                assert(cqe.user_data != 0);
 
                 // We know that a SQE/CQE is _always_ associated with a pointer of type Callback.
 
@@ -860,7 +859,7 @@ pub fn Server(comptime Context: type) type {
         }
 
         fn onWriteResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            debug.assert(client.buffer.items.len > 0);
+            assert(client.buffer.items.len > 0);
 
             switch (cqe.err()) {
                 .SUCCESS => {},
@@ -961,7 +960,7 @@ pub fn Server(comptime Context: type) type {
         fn onStatxResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
             switch (cqe.err()) {
                 .SUCCESS => {
-                    debug.assert(client.buffer.items.len == 0);
+                    assert(client.buffer.items.len == 0);
                 },
                 .CANCELED => {
                     return error.Canceled;
@@ -1003,7 +1002,7 @@ pub fn Server(comptime Context: type) type {
             // The file has not yet been registered, try to do it
 
             // Assert the file descriptor is of type .direct, if it isn't it's a bug.
-            debug.assert(client.response_state.file.fd == .direct);
+            assert(client.response_state.file.fd == .direct);
             const fd = client.response_state.file.fd.direct;
 
             if (self.registered_fds.acquire(fd)) |registered_fd| {
@@ -1083,7 +1082,7 @@ pub fn Server(comptime Context: type) type {
         }
 
         fn onOpenResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            debug.assert(client.buffer.items.len == 0);
+            assert(client.buffer.items.len == 0);
 
             switch (cqe.err()) {
                 .SUCCESS => {},
