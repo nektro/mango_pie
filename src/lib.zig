@@ -320,7 +320,7 @@ pub const ServerOptions = struct {
 /// NOTE: this is _not_ thread safe ! You must create on Server object per thread.
 pub const Server = struct {
     const Self = @This();
-    const CallbackType = Callback(*Self, *ClientState);
+    const CallbackType = Callback(*ClientState);
 
     /// allocator used to allocate each client state
     root_allocator: std.mem.Allocator,

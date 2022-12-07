@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const io_uring_cqe = std.os.linux.io_uring_cqe;
+const http = @import("./lib.zig");
 
 /// Callback encapsulates a context and a function pointer that will be called when
 /// the server loop will process the CQEs.
@@ -9,13 +10,13 @@ const io_uring_cqe = std.os.linux.io_uring_cqe;
 /// There are two kinds of callbacks currently:
 /// * operations associated with a client
 /// * operations not associated with a client
-pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
+pub fn Callback(comptime ClientContext: type) type {
     return struct {
         const Self = @This();
 
-        server: ServerType,
+        server: *http.Server,
         client_context: ?ClientContext = null,
-        call: *const fn (ServerType, ?ClientContext, io_uring_cqe) anyerror!void,
+        call: *const fn (*http.Server, ?ClientContext, io_uring_cqe) anyerror!void,
 
         next: ?*Self = null,
 
@@ -29,7 +30,7 @@ pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
             nb: usize,
             free_list: ?*Self,
 
-            pub fn init(allocator: std.mem.Allocator, server: ServerType, nb: usize) !Pool {
+            pub fn init(allocator: std.mem.Allocator, server: *http.Server, nb: usize) !Pool {
                 var res = Pool{
                     .allocator = allocator,
                     .nb = nb,
@@ -77,8 +78,8 @@ pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
 
             /// Returns a ready to use callback or an error if none are available.
             /// `cb` must be a function with either one of the following signatures:
-            ///   * fn(ServerType, io_uring_cqe)
-            ///   * fn(ServerType, ClientContext, io_uring_cqe)
+            ///   * fn(*http.Server, io_uring_cqe)
+            ///   * fn(*http.Server, ClientContext, io_uring_cqe)
             ///
             /// If `cb` takes a ClientContext `args` must be a tuple with at least the first element being a ClientContext.
             pub fn get(self: *Pool, comptime cb: anytype, args: anytype) !*Self {
@@ -92,27 +93,27 @@ pub fn Callback(comptime ServerType: type, comptime ClientContext: type) type {
                 switch (func_args.len) {
                     3 => {
                         comptime {
-                            expectFuncArgType(func_args, 0, ServerType);
+                            expectFuncArgType(func_args, 0, *http.Server);
                             expectFuncArgType(func_args, 1, ClientContext);
                             expectFuncArgType(func_args, 2, io_uring_cqe);
                         }
 
                         ret.client_context = args[0];
                         ret.call = struct {
-                            fn wrapper(server: ServerType, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
+                            fn wrapper(server: *http.Server, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
                                 return cb(server, client_context.?, cqe);
                             }
                         }.wrapper;
                     },
                     2 => {
                         comptime {
-                            expectFuncArgType(func_args, 0, ServerType);
+                            expectFuncArgType(func_args, 0, *http.Server);
                             expectFuncArgType(func_args, 1, io_uring_cqe);
                         }
 
                         ret.client_context = null;
                         ret.call = struct {
-                            fn wrapper(server: ServerType, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
+                            fn wrapper(server: *http.Server, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
                                 _ = client_context;
                                 return cb(server, cqe);
                             }
