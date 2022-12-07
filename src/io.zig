@@ -35,7 +35,6 @@ pub const RegisteredFileDescriptors = struct {
         logger.debug("REGISTERED FILE DESCRIPTORS, fds={d}", .{
             self.fds,
         });
-
         try ring.register_files(self.fds[0..]);
     }
 
@@ -43,7 +42,6 @@ pub const RegisteredFileDescriptors = struct {
         logger.debug("UPDATE FILE DESCRIPTORS, fds={d}", .{
             self.fds,
         });
-
         try ring.register_files_update(0, self.fds[0..]);
     }
 
@@ -52,23 +50,18 @@ pub const RegisteredFileDescriptors = struct {
         for (self.states) |*state, i| {
             if (state.* == .free) {
                 // Slot is free, change its state and set the file descriptor.
-
                 state.* = .used;
                 self.fds[i] = fd;
-
                 return @intCast(i32, i);
             }
-        } else {
-            return null;
         }
+        return null;
     }
 
     pub fn release(self: *Self, index: i32) void {
         const idx = @intCast(usize, index);
-
         debug.assert(self.states[idx] == .used);
         debug.assert(self.fds[idx] != -1);
-
         self.states[idx] = .free;
         self.fds[idx] = -1;
     }
@@ -83,20 +76,10 @@ pub fn createSocket(port: u16) !os.socket_t {
     errdefer os.close(sockfd);
 
     // Enable reuseaddr if possible
-    os.setsockopt(
-        sockfd,
-        os.SOL.SOCKET,
-        os.SO.REUSEPORT,
-        &mem.toBytes(@as(c_int, 1)),
-    ) catch {};
+    os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEPORT, &mem.toBytes(@as(c_int, 1))) catch {};
 
     // Disable IPv6 only
-    try os.setsockopt(
-        sockfd,
-        os.IPPROTO.IPV6,
-        os.linux.IPV6.V6ONLY,
-        &mem.toBytes(@as(c_int, 0)),
-    );
+    try os.setsockopt(sockfd, os.IPPROTO.IPV6, os.linux.IPV6.V6ONLY, &mem.toBytes(@as(c_int, 0)));
 
     const addr = try net.Address.parseIp6("::0", port);
 

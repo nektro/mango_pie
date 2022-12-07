@@ -9,12 +9,8 @@ pub fn build(b: *std.build.Builder) void {
 
     const picohttp_flags: []const []const u8 = switch (mode) {
         .Debug => &.{},
-        .ReleaseFast, .ReleaseSafe => &.{
-            "-O3",
-        },
-        .ReleaseSmall => &.{
-            "-O0",
-        },
+        .ReleaseFast, .ReleaseSafe => &.{"-O3"},
+        .ReleaseSmall => &.{"-O0"},
     };
 
     const picohttp = b.addStaticLibrary("picohttp", null);

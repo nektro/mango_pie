@@ -71,14 +71,7 @@ const ServerContext = struct {
     fn handleRequest(self: *Self, per_request_allocator: mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
         _ = per_request_allocator;
 
-        logger.debug("ctx#{d:<4} IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{
-            self.id,
-            peer.addr,
-            @tagName(req.method),
-            req.path,
-            req.minor_version,
-            req.body,
-        });
+        logger.debug("ctx#{d:<4} IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ self.id, peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
 
         if (mem.startsWith(u8, req.path, "/static")) {
             return httpserver.Response{
@@ -88,26 +81,21 @@ const ServerContext = struct {
                     .path = req.path[1..],
                 },
             };
-        } else {
-            return httpserver.Response{
-                .response = .{
-                    .status_code = .ok,
-                    .headers = &[_]httpserver.Header{},
-                    .data = "Hello, World in handler!",
-                },
-            };
         }
+        return httpserver.Response{
+            .response = .{
+                .status_code = .ok,
+                .headers = &[_]httpserver.Header{},
+                .data = "Hello, World in handler!",
+            },
+        };
     }
 };
 
 pub fn main() anyerror!void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};
-    defer if (gpa.deinit()) {
-        debug.panic("leaks detected", .{});
-    };
+    defer assert(!gpa.deinit());
     var allocator = gpa.allocator();
-
-    //
 
     const listen_port: u16 = 3405;
     const max_server_threads: usize = 1;

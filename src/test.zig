@@ -38,12 +38,7 @@ const TestHarness = struct {
             const sockfd = try os.socket(os.AF.INET6, os.SOCK.STREAM, 0);
             errdefer os.close(sockfd);
 
-            os.setsockopt(
-                sockfd,
-                os.SOL.SOCKET,
-                os.SO.REUSEADDR,
-                &mem.toBytes(@as(c_int, 1)),
-            ) catch {};
+            os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1))) catch {};
 
             const addr = try net.Address.parseIp6("::0", port);
 
@@ -61,14 +56,7 @@ const TestHarness = struct {
             .server = undefined,
             .thread = undefined,
         };
-        try res.server.init(
-            allocator,
-            .{},
-            &res.running,
-            socket,
-            res,
-            handler,
-        );
+        try res.server.init(allocator, .{}, &res.running, socket, res, handler);
 
         // Start thread
 
@@ -101,11 +89,7 @@ const TestHarness = struct {
 
     fn do(self: *TestHarness, method: []const u8, path: []const u8, body_opt: ?[]const u8) !curl.Response {
         var buf: [1024]u8 = undefined;
-        const url = try fmt.bufPrintZ(&buf, "http://localhost:{d}{s}", .{
-            port,
-            path,
-        });
-
+        const url = try fmt.bufPrintZ(&buf, "http://localhost:{d}{s}", .{ port, path });
         return curl.do(self.root_allocator, method, url, body_opt);
     }
 };
@@ -131,13 +115,11 @@ test "GET 200 OK" {
                     try testing.expect(req.headers.get("Content-Type") == null);
                     try testing.expect(req.body == null);
 
-                    return httpserver.Response{
-                        .response = .{
-                            .status_code = .ok,
-                            .headers = &[_]httpserver.Header{},
-                            .data = "Hello, World!",
-                        },
-                    };
+                    return httpserver.Response{ .response = .{
+                        .status_code = .ok,
+                        .headers = &[_]httpserver.Header{},
+                        .data = "Hello, World!",
+                    } };
                 }
             }.handle,
         );
@@ -176,13 +158,11 @@ test "POST 200 OK" {
                 try testing.expectEqual(body.len, try fmt.parseInt(usize, req.headers.get("Content-Length").?.value, 10));
                 try testing.expectEqualStrings(body, req.body.?);
 
-                return httpserver.Response{
-                    .response = .{
-                        .status_code = .ok,
-                        .headers = &[_]httpserver.Header{},
-                        .data = "Hello, World!",
-                    },
-                };
+                return httpserver.Response{ .response = .{
+                    .status_code = .ok,
+                    .headers = &[_]httpserver.Header{},
+                    .data = "Hello, World!",
+                } };
             }
         }.handle,
     );
@@ -219,13 +199,11 @@ test "GET files" {
 
                 const path = req.path[1..];
 
-                return httpserver.Response{
-                    .send_file = .{
-                        .status_code = .ok,
-                        .headers = &[_]httpserver.Header{},
-                        .path = path,
-                    },
-                };
+                return httpserver.Response{ .send_file = .{
+                    .status_code = .ok,
+                    .headers = &[_]httpserver.Header{},
+                    .path = path,
+                } };
             }
         }.handle,
     );

@@ -45,10 +45,8 @@ pub const Headers = struct {
             .storage = undefined,
             .view = undefined,
         };
-
         const num_headers = req.copyHeaders(&res.storage);
         res.view = res.storage[0..num_headers];
-
         return res;
     }
 
@@ -235,13 +233,15 @@ const ClientState = struct {
         headers: []Header = &[_]Header{},
 
         /// state used when we need to send a static file from the filesystem.
-        file: struct {
+        file: File = .{},
+
+        const File = struct {
             path: [:0]u8 = undefined,
             fd: ResponseStateFileDescriptor = undefined,
             statx_buf: os.linux.Statx = undefined,
 
             offset: usize = 0,
-        } = .{},
+        };
     };
 
     gpa: mem.Allocator,
@@ -268,14 +268,11 @@ const ClientState = struct {
     pub fn init(self: *ClientState, allocator: mem.Allocator, peer_addr: net.Address, client_fd: os.socket_t, max_buffer_size: usize) !void {
         self.* = .{
             .gpa = allocator,
-            .peer = .{
-                .addr = peer_addr,
-            },
+            .peer = .{ .addr = peer_addr },
             .fd = client_fd,
             .buffer = undefined,
         };
         self.temp_buffer_fba = heap.FixedBufferAllocator.init(&self.temp_buffer);
-
         self.buffer = try std.ArrayList(u8).initCapacity(self.gpa, max_buffer_size);
     }
 
@@ -592,9 +589,7 @@ pub fn Server(comptime Context: type) type {
                     self.handleCallbackError(cb.client_context, err);
                 };
             }
-
             self.pending -= cqe_count;
-
             return cqe_count;
         }
 
@@ -645,7 +640,6 @@ pub fn Server(comptime Context: type) type {
             }
 
             var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
-
             return self.ring.link_timeout(
                 @ptrToInt(tmp),
                 &self.listener.timeout,
@@ -660,7 +654,6 @@ pub fn Server(comptime Context: type) type {
             });
 
             var tmp = try self.callbacks.get(cb, .{});
-
             return self.ring.close(
                 @ptrToInt(tmp),
                 fd,
@@ -675,7 +668,6 @@ pub fn Server(comptime Context: type) type {
             });
 
             var tmp = try self.callbacks.get(cb, .{client});
-
             return self.ring.close(
                 @ptrToInt(tmp),
                 fd,
@@ -719,7 +711,6 @@ pub fn Server(comptime Context: type) type {
             errdefer client.deinit();
 
             try self.clients.append(client);
-
             _ = try self.submitRead(client, client_fd, 0, onReadRequest);
         }
 
@@ -810,7 +801,6 @@ pub fn Server(comptime Context: type) type {
             }
 
             const read = @intCast(usize, cqe.res);
-
             logger.debug("ctx#{s:<4} addr={} ON READ REQUEST read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
 
             const previous_len = client.buffer.items.len;
@@ -821,15 +811,8 @@ pub fn Server(comptime Context: type) type {
                 try processRequest(self, client);
             } else {
                 // Not enough data, read more.
-
                 logger.debug("ctx#{s:<4} addr={} HTTP request incomplete, submitting read", .{ self.user_context, client.peer.addr });
-
-                _ = try self.submitRead(
-                    client,
-                    client.fd,
-                    0,
-                    onReadRequest,
-                );
+                _ = try self.submitRead(client, client.fd, 0, onReadRequest);
             }
         }
 
@@ -857,30 +840,20 @@ pub fn Server(comptime Context: type) type {
 
                 // Remove the already written data
                 try client.buffer.replaceRange(0, written, &[0]u8{});
-
                 _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
                 return;
             }
 
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE done", .{
-                self.user_context,
-                client.peer.addr,
-            });
+            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE done", .{ self.user_context, client.peer.addr });
 
             // Response written, read the next request
             client.request_state = .{};
             client.buffer.clearRetainingCapacity();
-
             _ = try self.submitRead(client, client.fd, 0, onReadRequest);
         }
 
         fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
-            logger.debug("ctx#{s:<4} addr={} ON CLOSE RESPONSE FILE fd={s}", .{
-                self.user_context,
-                client.peer.addr,
-                client.response_state.file.fd,
-            });
-
+            logger.debug("ctx#{s:<4} addr={} ON CLOSE RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
             switch (cqe.err()) {
                 .SUCCESS => {},
                 else => |err| {
@@ -913,13 +886,7 @@ pub fn Server(comptime Context: type) type {
             }
 
             const written = @intCast(usize, cqe.res);
-
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{
-                self.user_context,
-                client.peer.addr,
-                written,
-                client.fd,
-            });
+            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{ self.user_context, client.peer.addr, written, client.fd });
 
             if (written < client.buffer.items.len) {
                 // Short write, write the remaining data
@@ -950,10 +917,7 @@ pub fn Server(comptime Context: type) type {
                 return;
             }
 
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE done", .{
-                self.user_context,
-                client.peer.addr,
-            });
+            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE done", .{ self.user_context, client.peer.addr });
 
             // Response file written, read the next request
 
@@ -968,7 +932,6 @@ pub fn Server(comptime Context: type) type {
 
             // Reset the client state
             client.reset();
-
             _ = try self.submitRead(client, client.fd, 0, onReadRequest);
         }
 
@@ -985,7 +948,6 @@ pub fn Server(comptime Context: type) type {
             }
 
             const read = @intCast(usize, cqe.res);
-
             client.response_state.file.offset += read;
 
             logger.debug("ctx#{s:<4} addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
@@ -997,7 +959,6 @@ pub fn Server(comptime Context: type) type {
             });
 
             try client.buffer.appendSlice(client.temp_buffer[0..read]);
-
             _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
         }
 
@@ -1040,7 +1001,6 @@ pub fn Server(comptime Context: type) type {
 
                 var sqe = try self.submitRead(client, entry.fd, 0, onReadResponseFile);
                 sqe.flags |= os.linux.IOSQE_FIXED_FILE;
-
                 return;
             }
 
@@ -1059,7 +1019,6 @@ pub fn Server(comptime Context: type) type {
                     client.response_state.file.path,
                     registered_fd,
                 });
-
                 client.response_state.file.fd = .{ .registered = registered_fd };
 
                 try self.registered_fds.update(&self.ring);
@@ -1116,12 +1075,7 @@ pub fn Server(comptime Context: type) type {
             const body = client.request_state.body.?;
 
             if (body.len < content_length) {
-                logger.debug("ctx#{s:<4} addr={} buffer len={d} bytes, content length={d} bytes", .{
-                    self.user_context,
-                    client.peer.addr,
-                    body.len,
-                    content_length,
-                });
+                logger.debug("ctx#{s:<4} addr={} buffer len={d} bytes, content length={d} bytes", .{ self.user_context, client.peer.addr, body.len, content_length });
 
                 // Not enough data, read more.
                 _ = try self.submitRead(client, client.fd, 0, onReadBody);
@@ -1291,21 +1245,10 @@ pub fn Server(comptime Context: type) type {
         }
 
         fn submitRead(self: *Self, client: *ClientState, fd: os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting read from {d}, offset {d}", .{
-                self.user_context,
-                client.peer.addr,
-                fd,
-                offset,
-            });
+            logger.debug("ctx#{s:<4} addr={} submitting read from {d}, offset {d}", .{ self.user_context, client.peer.addr, fd, offset });
 
             var tmp = try self.callbacks.get(cb, .{client});
-
-            return self.ring.read(
-                @ptrToInt(tmp),
-                fd,
-                .{ .buffer = &client.temp_buffer },
-                offset,
-            );
+            return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
         }
 
         fn submitWrite(self: *Self, client: *ClientState, fd: os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
@@ -1319,50 +1262,21 @@ pub fn Server(comptime Context: type) type {
             });
 
             var tmp = try self.callbacks.get(cb, .{client});
-
-            return self.ring.write(
-                @ptrToInt(tmp),
-                fd,
-                client.buffer.items,
-                offset,
-            );
+            return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
         }
 
         fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting open, path=\"{s}\"", .{
-                self.user_context,
-                client.peer.addr,
-                fmt.fmtSliceEscapeLower(path),
-            });
+            logger.debug("ctx#{s:<4} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, fmt.fmtSliceEscapeLower(path) });
 
             var tmp = try self.callbacks.get(cb, .{client});
-
-            return try self.ring.openat(
-                @ptrToInt(tmp),
-                os.linux.AT.FDCWD,
-                path,
-                flags,
-                mode,
-            );
+            return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
         }
 
         fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting statx, path=\"{s}\"", .{
-                self.user_context,
-                client.peer.addr,
-                fmt.fmtSliceEscapeLower(path),
-            });
+            logger.debug("ctx#{s:<4} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, fmt.fmtSliceEscapeLower(path) });
 
             var tmp = try self.callbacks.get(cb, .{client});
-
-            return self.ring.statx(
-                @ptrToInt(tmp),
-                os.linux.AT.FDCWD,
-                path,
-                flags,
-                mask,
-                buf,
-            );
+            return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);
         }
     };
 }
