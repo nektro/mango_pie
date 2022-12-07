@@ -1,7 +1,6 @@
 const std = @import("std");
 const net = std.net;
 const os = std.os;
-const testing = std.testing;
 
 const Atomic = std.atomic.Atomic;
 
@@ -95,20 +94,20 @@ test "GET 200 OK" {
     var i: usize = 1;
     while (i < 20) : (i += 1) {
         var th = try TestHarness.create(
-            testing.allocator,
+            std.testing.allocator,
             struct {
                 fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                     _ = ctx;
                     _ = per_request_allocator;
                     _ = peer;
 
-                    try testing.expectEqualStrings("/plaintext", req.path);
-                    try testing.expectEqual(std.http.Method.GET, req.method);
-                    try testing.expect(req.headers.get("Host") != null);
-                    try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
-                    try testing.expect(req.headers.get("Content-Length") == null);
-                    try testing.expect(req.headers.get("Content-Type") == null);
-                    try testing.expect(req.body == null);
+                    try std.testing.expectEqualStrings("/plaintext", req.path);
+                    try std.testing.expectEqual(std.http.Method.GET, req.method);
+                    try std.testing.expect(req.headers.get("Host") != null);
+                    try std.testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
+                    try std.testing.expect(req.headers.get("Content-Length") == null);
+                    try std.testing.expect(req.headers.get("Content-Type") == null);
+                    try std.testing.expect(req.body == null);
 
                     return httpserver.Response{ .response = .{
                         .status_code = .ok,
@@ -125,8 +124,8 @@ test "GET 200 OK" {
             var resp = try th.do("GET", "/plaintext", null);
             defer resp.deinit();
 
-            try testing.expectEqual(@as(usize, 200), resp.response_code);
-            try testing.expectEqualStrings("Hello, World!", resp.data);
+            try std.testing.expectEqual(@as(usize, 200), resp.response_code);
+            try std.testing.expectEqualStrings("Hello, World!", resp.data);
         }
     }
 }
@@ -138,20 +137,20 @@ test "POST 200 OK" {
     ;
 
     var th = try TestHarness.create(
-        testing.allocator,
+        std.testing.allocator,
         struct {
             fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = ctx;
                 _ = per_request_allocator;
                 _ = peer;
 
-                try testing.expectEqualStrings("/foobar", req.path);
-                try testing.expectEqual(std.http.Method.POST, req.method);
-                try testing.expect(req.headers.get("Host") != null);
-                try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
-                try testing.expectEqualStrings("application/json", req.headers.get("Content-Type").?.value);
-                try testing.expectEqual(body.len, try std.fmt.parseInt(usize, req.headers.get("Content-Length").?.value, 10));
-                try testing.expectEqualStrings(body, req.body.?);
+                try std.testing.expectEqualStrings("/foobar", req.path);
+                try std.testing.expectEqual(std.http.Method.POST, req.method);
+                try std.testing.expect(req.headers.get("Host") != null);
+                try std.testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
+                try std.testing.expectEqualStrings("application/json", req.headers.get("Content-Type").?.value);
+                try std.testing.expectEqual(body.len, try std.fmt.parseInt(usize, req.headers.get("Content-Length").?.value, 10));
+                try std.testing.expectEqualStrings(body, req.body.?);
 
                 return httpserver.Response{ .response = .{
                     .status_code = .ok,
@@ -170,27 +169,27 @@ test "POST 200 OK" {
             var resp = try th.do("POST", "/foobar", body);
             defer resp.deinit();
 
-            try testing.expectEqual(@as(usize, 200), resp.response_code);
-            try testing.expectEqualStrings("Hello, World!", resp.data);
+            try std.testing.expectEqual(@as(usize, 200), resp.response_code);
+            try std.testing.expectEqualStrings("Hello, World!", resp.data);
         }
     }
 }
 
 test "GET files" {
     var th = try TestHarness.create(
-        testing.allocator,
+        std.testing.allocator,
         struct {
             fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = ctx;
                 _ = per_request_allocator;
                 _ = peer;
 
-                try testing.expect(std.mem.startsWith(u8, req.path, "/static"));
-                try testing.expect(req.headers.get("Host") != null);
-                try testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
-                try testing.expect(req.headers.get("Content-Length") == null);
-                try testing.expect(req.headers.get("Content-Type") == null);
-                try testing.expect(req.body == null);
+                try std.testing.expect(std.mem.startsWith(u8, req.path, "/static"));
+                try std.testing.expect(req.headers.get("Host") != null);
+                try std.testing.expectEqualStrings("*/*", req.headers.get("Accept").?.value);
+                try std.testing.expect(req.headers.get("Content-Length") == null);
+                try std.testing.expect(req.headers.get("Content-Type") == null);
+                try std.testing.expect(req.body == null);
 
                 const path = req.path[1..];
 
@@ -219,8 +218,8 @@ test "GET files" {
             var resp = try th.do("GET", tc.path, null);
             defer resp.deinit();
 
-            try testing.expectEqual(tc.exp_response_code, resp.response_code);
-            try testing.expectEqualStrings(tc.exp_data, resp.data);
+            try std.testing.expectEqual(tc.exp_response_code, resp.response_code);
+            try std.testing.expectEqualStrings(tc.exp_data, resp.data);
         }
     }
 }
