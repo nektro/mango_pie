@@ -1,4 +1,4 @@
-# zig-io\_uring-http-server
+# mango_pie
 
 Experiment writing a sort of working HTTP server using:
 * [io\_uring](https://unixism.net/loti/what_is_io_uring.html)
