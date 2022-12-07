@@ -1,0 +1,6 @@
+id: 857d9y0ezv9lfasw11j0okcew1xpifcpxb58rtpz2uj8zeo1
+name: mango_pie
+main: src/lib.zig
+license: MIT
+description: Experimental io_uring HTTP server in Zig
+dependencies:

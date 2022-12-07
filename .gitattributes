@@ -1,3 +1,4 @@
 *.c linguist-vendored
 *.h linguist-vendored
 *.zig text=auto eol=lf
+zigmod.* text=auto eol=lf
