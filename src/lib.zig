@@ -29,79 +29,6 @@ const c = @cImport({
     @cInclude("picohttpparser.h");
 });
 
-pub const StatusCode = enum(u10) {
-    // informational
-    continue_ = 100,
-    switching_protocols = 101,
-
-    // success
-    ok = 200,
-    created = 201,
-    accepted = 202,
-    no_content = 204,
-    partial_content = 206,
-
-    // redirection
-    moved_permanently = 301,
-    found = 302,
-    not_modified = 304,
-    temporary_redirect = 307,
-    permanent_redirect = 308,
-
-    // client error
-    bad_request = 400,
-    unauthorized = 401,
-    forbidden = 403,
-    not_found = 404,
-    method_not_allowed = 405,
-    not_acceptable = 406,
-    gone = 410,
-    too_many_requests = 429,
-
-    // server error
-    internal_server_error = 500,
-    bad_gateway = 502,
-    service_unavailable = 503,
-    gateway_timeout = 504,
-
-    pub fn toString(self: StatusCode) []const u8 {
-        switch (self) {
-            // informational
-            .continue_ => return "Continue",
-            .switching_protocols => return "Switching Protocols",
-
-            .ok => return "OK",
-            .created => return "Created",
-            .accepted => return "Accepted",
-            .no_content => return "No Content",
-            .partial_content => return "Partial Content",
-
-            // redirection
-            .moved_permanently => return "Moved Permanently",
-            .found => return "Found",
-            .not_modified => return "Not Modified",
-            .temporary_redirect => return "Temporary Redirected",
-            .permanent_redirect => return "Permanent Redirect",
-
-            // client error
-            .bad_request => return "Bad Request",
-            .unauthorized => return "Unauthorized",
-            .forbidden => return "Forbidden",
-            .not_found => return "Not Found",
-            .method_not_allowed => return "Method Not Allowed",
-            .not_acceptable => return "Not Acceptable",
-            .gone => return "Gone",
-            .too_many_requests => return "Too Many Requests",
-
-            // server error
-            .internal_server_error => return "Internal Server Error",
-            .bad_gateway => return "Bad Gateway",
-            .service_unavailable => return "Service Unavailable",
-            .gateway_timeout => return "Gateway Timeout",
-        }
-    }
-};
-
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
@@ -259,13 +186,13 @@ pub const Request = struct {
 pub const Response = union(enum) {
     /// The response is a simple buffer.
     response: struct {
-        status_code: StatusCode,
+        status_code: std.http.Status,
         headers: []Header,
         data: []const u8,
     },
     /// The response is a static file that will be read from the filesystem.
     send_file: struct {
-        status_code: StatusCode,
+        status_code: std.http.Status,
         headers: []Header,
         path: []const u8,
     },
@@ -304,7 +231,7 @@ const ClientState = struct {
     /// Holds state used to send a response to the client.
     const ResponseState = struct {
         /// status code and header are overwritable in the handler
-        status_code: StatusCode = .ok,
+        status_code: std.http.Status = .ok,
         headers: []Header = &[_]Header{},
 
         /// state used when we need to send a static file from the filesystem.
@@ -374,7 +301,7 @@ const ClientState = struct {
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{
             @enumToInt(self.response_state.status_code),
-            self.response_state.status_code.toString(),
+            self.response_state.status_code.phrase().?,
         });
         for (self.response_state.headers) |header| {
             try writer.print("{s}: {s}\n", .{ header.name, header.value });
