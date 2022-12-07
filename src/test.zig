@@ -1,5 +1,4 @@
 const std = @import("std");
-const heap = std.heap;
 const net = std.net;
 const os = std.os;
 const testing = std.testing;
@@ -16,7 +15,7 @@ const TestHarness = struct {
     const Self = @This();
 
     root_allocator: std.mem.Allocator,
-    arena: heap.ArenaAllocator,
+    arena: std.heap.ArenaAllocator,
     socket: os.socket_t,
     running: Atomic(bool) = Atomic(bool).init(true),
     server: httpserver.Server(*Self),
@@ -47,7 +46,7 @@ const TestHarness = struct {
         var res = try allocator.create(TestHarness);
         res.* = .{
             .root_allocator = allocator,
-            .arena = heap.ArenaAllocator.init(allocator),
+            .arena = std.heap.ArenaAllocator.init(allocator),
             .socket = socket,
             .server = undefined,
             .thread = undefined,

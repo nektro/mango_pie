@@ -1,5 +1,4 @@
 const std = @import("std");
-const heap = std.heap;
 const os = std.os;
 
 const Atomic = std.atomic.Atomic;
@@ -83,7 +82,7 @@ const ServerContext = struct {
 };
 
 pub fn main() anyerror!void {
-    var gpa = heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer assert(!gpa.deinit());
     var allocator = gpa.allocator();
 
@@ -94,7 +93,7 @@ pub fn main() anyerror!void {
     const max_connections: usize = 128;
 
     // NOTE(vincent): for debugging
-    // var logging_allocator = heap.loggingAllocator(gpa.allocator());
+    // var logging_allocator = std.heap.loggingAllocator(gpa.allocator());
     // var allocator = logging_allocator.allocator();
 
     try addSignalHandlers();

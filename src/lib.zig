@@ -1,6 +1,5 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const heap = std.heap;
 const net = std.net;
 const os = std.os;
 
@@ -246,7 +245,7 @@ const ClientState = struct {
 
     // Buffer and allocator used for small allocations (nul-terminated path, integer to int conversions etc).
     temp_buffer: [128]u8 = undefined,
-    temp_buffer_fba: heap.FixedBufferAllocator = undefined,
+    temp_buffer_fba: std.heap.FixedBufferAllocator = undefined,
 
     // TODO(vincent): prevent going over the max_buffer_size somehow ("limiting" allocator ?)
     // TODO(vincent): right now we always use clearRetainingCapacity() which may keep a lot of memory
@@ -266,7 +265,7 @@ const ClientState = struct {
             .fd = client_fd,
             .buffer = undefined,
         };
-        self.temp_buffer_fba = heap.FixedBufferAllocator.init(&self.temp_buffer);
+        self.temp_buffer_fba = std.heap.FixedBufferAllocator.init(&self.temp_buffer);
         self.buffer = try std.ArrayList(u8).initCapacity(self.gpa, max_buffer_size);
     }
 
