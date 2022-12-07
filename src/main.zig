@@ -47,7 +47,7 @@ const ServerContext = struct {
     const Self = @This();
 
     id: usize,
-    server: httpserver.Server(*Self),
+    server: httpserver.Server,
     thread: std.Thread,
 
     pub fn format(self: *const Self, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -57,10 +57,10 @@ const ServerContext = struct {
         try writer.print("{d}", .{self.id});
     }
 
-    fn handleRequest(self: *Self, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+    fn handleRequest(per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
         _ = per_request_allocator;
 
-        logger.debug("ctx#{d:<4} IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ self.id, peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
+        logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
 
         if (std.mem.startsWith(u8, req.path, "/static")) {
             return httpserver.Response{
@@ -123,7 +123,7 @@ pub fn main() anyerror!void {
             },
             &global_running,
             server_fd,
-            item,
+            {},
             ServerContext.handleRequest,
         );
     }
@@ -136,7 +136,7 @@ pub fn main() anyerror!void {
         item.thread = try std.Thread.spawn(
             .{},
             struct {
-                fn worker(server: *httpserver.Server(*ServerContext)) !void {
+                fn worker(server: *httpserver.Server) !void {
                     return server.run(1 * std.time.ns_per_s);
                 }
             }.worker,

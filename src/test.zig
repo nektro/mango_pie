@@ -17,7 +17,7 @@ const TestHarness = struct {
     arena: std.heap.ArenaAllocator,
     socket: os.socket_t,
     running: Atomic(bool) = Atomic(bool).init(true),
-    server: httpserver.Server(*Self),
+    server: httpserver.Server,
     thread: std.Thread,
 
     pub fn format(self: *const Self, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -27,7 +27,7 @@ const TestHarness = struct {
         try writer.writeAll("0");
     }
 
-    fn create(allocator: std.mem.Allocator, comptime handler: httpserver.RequestHandler(*Self)) !*TestHarness {
+    fn create(allocator: std.mem.Allocator, handler: httpserver.RequestHandler) !*TestHarness {
         const socket = blk: {
             const sockfd = try os.socket(os.AF.INET6, os.SOCK.STREAM, 0);
             errdefer os.close(sockfd);
@@ -50,14 +50,14 @@ const TestHarness = struct {
             .server = undefined,
             .thread = undefined,
         };
-        try res.server.init(allocator, .{}, &res.running, socket, res, handler);
+        try res.server.init(allocator, .{}, &res.running, socket, {}, handler);
 
         // Start thread
 
         res.thread = try std.Thread.spawn(
             .{},
             struct {
-                fn worker(server: *httpserver.Server(*Self)) !void {
+                fn worker(server: *httpserver.Server) !void {
                     return server.run(10 * std.time.ns_per_ms);
                 }
             }.worker,
@@ -96,8 +96,7 @@ test "GET 200 OK" {
         var th = try TestHarness.create(
             std.testing.allocator,
             struct {
-                fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
-                    _ = ctx;
+                fn handle(per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                     _ = per_request_allocator;
                     _ = peer;
 
@@ -139,8 +138,7 @@ test "POST 200 OK" {
     var th = try TestHarness.create(
         std.testing.allocator,
         struct {
-            fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
-                _ = ctx;
+            fn handle(per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = per_request_allocator;
                 _ = peer;
 
@@ -179,8 +177,7 @@ test "GET files" {
     var th = try TestHarness.create(
         std.testing.allocator,
         struct {
-            fn handle(ctx: *TestHarness, per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
-                _ = ctx;
+            fn handle(per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
                 _ = per_request_allocator;
                 _ = peer;
 

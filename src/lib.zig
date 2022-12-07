@@ -189,9 +189,7 @@ pub const Response = union(enum) {
     },
 };
 
-pub fn RequestHandler(comptime Context: type) type {
-    return *const fn (Context, std.mem.Allocator, Peer, Request) anyerror!Response;
-}
+pub const RequestHandler = *const fn (std.mem.Allocator, Peer, Request) anyerror!Response;
 
 const ResponseStateFileDescriptor = union(enum) {
     direct: os.fd_t,
@@ -320,956 +318,953 @@ pub const ServerOptions = struct {
 /// Then the server will accept connections and process requests.
 ///
 /// NOTE: this is _not_ thread safe ! You must create on Server object per thread.
-pub fn Server(comptime Context: type) type {
-    return struct {
-        const Self = @This();
-        const CallbackType = Callback(*Self, *ClientState);
+pub const Server = struct {
+    const Self = @This();
+    const CallbackType = Callback(*Self, *ClientState);
 
-        /// allocator used to allocate each client state
-        root_allocator: std.mem.Allocator,
+    /// allocator used to allocate each client state
+    root_allocator: std.mem.Allocator,
 
-        /// uring dedicated to this server object.
-        ring: IO_Uring,
+    /// uring dedicated to this server object.
+    ring: IO_Uring,
 
-        /// options controlling the behaviour of the server.
-        options: ServerOptions,
+    /// options controlling the behaviour of the server.
+    options: ServerOptions,
 
-        /// indicates if the server should continue running.
-        /// This is _not_ owned by the server but by the caller.
-        running: *Atomic(bool),
+    /// indicates if the server should continue running.
+    /// This is _not_ owned by the server but by the caller.
+    running: *Atomic(bool),
 
-        /// This field lets us keep track of the number of pending operations which is necessary to implement drain() properly.
+    /// This field lets us keep track of the number of pending operations which is necessary to implement drain() properly.
+    ///
+    /// Note that this is different than the number of SQEs pending in the submission queue or CQEs pending in the completion queue.
+    /// For example an accept operation which has been consumed by the kernel but hasn't accepted any connection yet must be considered
+    /// pending for us but it's not pending in either the submission or completion queue.
+    /// Another example is a timeout: once accepted and until expired it won't be available in the completion queue.
+    pending: usize = 0,
+
+    /// Listener state
+    listener: struct {
+        /// server file descriptor used for accept(2) operation.
+        /// Must have had bind(2) and listen(2) called on it before being passed to `init()`.
+        server_fd: os.socket_t,
+
+        /// indicates if an accept operation is pending.
+        accept_waiting: bool = false,
+
+        /// the timeout data for the link_timeout operation linked to the previous accept.
         ///
-        /// Note that this is different than the number of SQEs pending in the submission queue or CQEs pending in the completion queue.
-        /// For example an accept operation which has been consumed by the kernel but hasn't accepted any connection yet must be considered
-        /// pending for us but it's not pending in either the submission or completion queue.
-        /// Another example is a timeout: once accepted and until expired it won't be available in the completion queue.
-        pending: usize = 0,
-
-        /// Listener state
-        listener: struct {
-            /// server file descriptor used for accept(2) operation.
-            /// Must have had bind(2) and listen(2) called on it before being passed to `init()`.
-            server_fd: os.socket_t,
-
-            /// indicates if an accept operation is pending.
-            accept_waiting: bool = false,
-
-            /// the timeout data for the link_timeout operation linked to the previous accept.
-            ///
-            /// Each accept operation has a following timeout linked to it; this works in such a way
-            /// that if the timeout has expired the accept operation is cancelled and if the accept has finished
-            /// before the timeout then the timeout operation is cancelled.
-            ///
-            /// This is useful to run the main loop for a bounded duration.
-            timeout: os.linux.kernel_timespec = .{
-                .tv_sec = 0,
-                .tv_nsec = 0,
-            },
-
-            // Next peer we're accepting.
-            // Will be valid after a successful CQE for an accept operation.
-            peer_addr: net.Address = net.Address{
-                .any = undefined,
-            },
-            peer_addr_size: u32 = @sizeOf(os.sockaddr),
+        /// Each accept operation has a following timeout linked to it; this works in such a way
+        /// that if the timeout has expired the accept operation is cancelled and if the accept has finished
+        /// before the timeout then the timeout operation is cancelled.
+        ///
+        /// This is useful to run the main loop for a bounded duration.
+        timeout: os.linux.kernel_timespec = .{
+            .tv_sec = 0,
+            .tv_nsec = 0,
         },
 
-        /// CQEs storage
-        cqes: []io_uring_cqe = undefined,
+        // Next peer we're accepting.
+        // Will be valid after a successful CQE for an accept operation.
+        peer_addr: net.Address = net.Address{
+            .any = undefined,
+        },
+        peer_addr_size: u32 = @sizeOf(os.sockaddr),
+    },
 
-        /// List of client states.
-        /// A new state is created for each socket accepted and destroyed when the socket is closed for any reason.
-        clients: std.ArrayList(*ClientState),
+    /// CQEs storage
+    cqes: []io_uring_cqe = undefined,
 
-        /// Free list of callback objects necessary for working with the uring.
-        /// See the documentation of Callback.Pool.
-        callbacks: CallbackType.Pool,
+    /// List of client states.
+    /// A new state is created for each socket accepted and destroyed when the socket is closed for any reason.
+    clients: std.ArrayList(*ClientState),
 
-        /// Set of registered file descriptors for use with the uring.
-        ///
-        /// TODO(vincent): make use of this somehow ? right now it crashes the kernel.
-        registered_fds: RegisteredFileDescriptors,
-        registered_files: std.StringHashMap(RegisteredFile),
+    /// Free list of callback objects necessary for working with the uring.
+    /// See the documentation of Callback.Pool.
+    callbacks: CallbackType.Pool,
 
-        user_context: Context,
-        handler: RequestHandler(Context),
+    /// Set of registered file descriptors for use with the uring.
+    ///
+    /// TODO(vincent): make use of this somehow ? right now it crashes the kernel.
+    registered_fds: RegisteredFileDescriptors,
+    registered_files: std.StringHashMap(RegisteredFile),
 
-        /// initializes a Server object.
-        pub fn init(
-            self: *Self,
-            /// General purpose allocator which will:
-            /// * allocate all client states (including request/response bodies).
-            /// * allocate the callback pool
-            /// Depending on the workload the allocator can be hit quite often (for example if all clients close their connection).
-            allocator: std.mem.Allocator,
-            /// controls the behaviour of the server (max number of connections, max buffer size, etc).
-            options: ServerOptions,
-            /// owned by the caller and indicates if the server should shutdown properly.
-            running: *Atomic(bool),
-            /// must be a socket properly initialized with listen(2) and bind(2) which will be used for accept(2) operations.
-            server_fd: os.socket_t,
-            /// user provided context that will be passed to the request handlers.
-            user_context: Context,
-            /// user provied request handler.
-            comptime handler: RequestHandler(Context),
-        ) !void {
-            // TODO(vincent): probe for available features for io_uring ?
+    user_context: void,
+    handler: RequestHandler,
 
-            self.* = .{
-                .root_allocator = allocator,
-                .ring = try std.os.linux.IO_Uring.init(options.max_ring_entries, 0),
-                .options = options,
-                .running = running,
-                .listener = .{
-                    .server_fd = server_fd,
-                },
-                .cqes = try allocator.alloc(io_uring_cqe, options.max_ring_entries),
-                .clients = try std.ArrayList(*ClientState).initCapacity(allocator, options.max_connections),
-                .callbacks = undefined,
-                .registered_fds = .{},
-                .registered_files = std.StringHashMap(RegisteredFile).init(allocator),
-                .user_context = user_context,
-                .handler = handler,
-            };
+    /// initializes a Server object.
+    pub fn init(
+        self: *Self,
+        /// General purpose allocator which will:
+        /// * allocate all client states (including request/response bodies).
+        /// * allocate the callback pool
+        /// Depending on the workload the allocator can be hit quite often (for example if all clients close their connection).
+        allocator: std.mem.Allocator,
+        /// controls the behaviour of the server (max number of connections, max buffer size, etc).
+        options: ServerOptions,
+        /// owned by the caller and indicates if the server should shutdown properly.
+        running: *Atomic(bool),
+        /// must be a socket properly initialized with listen(2) and bind(2) which will be used for accept(2) operations.
+        server_fd: os.socket_t,
+        /// user provided context that will be passed to the request handlers.
+        user_context: void,
+        /// user provied request handler.
+        handler: RequestHandler,
+    ) !void {
+        // TODO(vincent): probe for available features for io_uring ?
 
-            self.callbacks = try CallbackType.Pool.init(allocator, self, options.max_ring_entries);
+        self.* = .{
+            .root_allocator = allocator,
+            .ring = try std.os.linux.IO_Uring.init(options.max_ring_entries, 0),
+            .options = options,
+            .running = running,
+            .listener = .{
+                .server_fd = server_fd,
+            },
+            .cqes = try allocator.alloc(io_uring_cqe, options.max_ring_entries),
+            .clients = try std.ArrayList(*ClientState).initCapacity(allocator, options.max_connections),
+            .callbacks = undefined,
+            .registered_fds = .{},
+            .registered_files = std.StringHashMap(RegisteredFile).init(allocator),
+            .user_context = user_context,
+            .handler = handler,
+        };
 
-            try self.registered_fds.register(&self.ring);
+        self.callbacks = try CallbackType.Pool.init(allocator, self, options.max_ring_entries);
+
+        try self.registered_fds.register(&self.ring);
+    }
+
+    pub fn deinit(self: *Self) void {
+        var registered_files_iterator = self.registered_files.iterator();
+        while (registered_files_iterator.next()) |entry| {
+            self.root_allocator.free(entry.key_ptr.*);
         }
+        self.registered_files.deinit();
 
-        pub fn deinit(self: *Self) void {
-            var registered_files_iterator = self.registered_files.iterator();
-            while (registered_files_iterator.next()) |entry| {
-                self.root_allocator.free(entry.key_ptr.*);
-            }
-            self.registered_files.deinit();
-
-            for (self.clients.items) |client| {
-                client.deinit();
-                self.root_allocator.destroy(client);
-            }
-            self.clients.deinit();
-
-            self.callbacks.deinit();
-            self.root_allocator.free(self.cqes);
-            self.ring.deinit();
-        }
-
-        /// Runs the main loop until the `running` boolean is false.
-        ///
-        /// `accept_timeout` controls how much time the loop can wait for an accept operation to finish.
-        /// This duration is the lower bound duration before the main loop can stop when `running` is false;
-        pub fn run(self: *Self, accept_timeout: u63) !void {
-            // TODO(vincent): we don't properly shutdown the peer sockets; we should do that.
-            // This can be done using standard close(2) calls I think.
-
-            while (self.running.load(.SeqCst)) {
-                // first step: (maybe) submit and accept with a link_timeout linked to it.
-                //
-                // Nothing is submitted if:
-                // * a previous accept operation is already waiting.
-                // * the number of connected clients reached the predefined limit.
-                try self.maybeAccept(accept_timeout);
-
-                // second step: submit to the kernel all previous queued SQE.
-                //
-                // SQEs might be queued by the maybeAccept call above or by the processCompletions call below, but
-                // obviously in that case its SQEs queued from the _previous iteration_ that are submitted to the kernel.
-                //
-                // Additionally we wait for at least 1 CQE to be available, if none is available the thread will be put to sleep by the kernel.
-                // Note that this doesn't work if the uring is setup with busy-waiting.
-                const submitted = try self.submit(1);
-
-                // third step: process all available CQEs.
-                //
-                // This asks the kernel to wait for at least `submitted` CQE to be available.
-                // Since we successfully submitted that many SQEs it is guaranteed we will _at some point_
-                // get that many CQEs but there's no guarantee they will be available instantly; if the
-                // kernel lags in processing the SQEs we can have a delay in getting the CQEs.
-                // This is further accentuated by the number of pending SQEs we can have.
-                //
-                // One example would be submitting a lot of fdatasync operations on slow devices.
-                _ = try self.processCompletions(submitted);
-            }
-            try self.drain();
-        }
-
-        fn maybeAccept(self: *Self, timeout: u63) !void {
-            if (!self.running.load(.SeqCst)) {
-                // we must stop: stop accepting connections.
-                return;
-            }
-            if (self.listener.accept_waiting or self.clients.items.len >= self.options.max_connections) {
-                return;
-            }
-
-            // Queue an accept and link it to a timeout.
-
-            var sqe = try self.submitAccept();
-            sqe.flags |= os.linux.IOSQE_IO_LINK;
-
-            self.listener.timeout.tv_sec = 0;
-            self.listener.timeout.tv_nsec = timeout;
-
-            _ = try self.submitAcceptLinkTimeout();
-
-            self.listener.accept_waiting = true;
-        }
-
-        /// Continuously submit SQEs and process completions until there are
-        /// no more pending operations.
-        ///
-        /// This must be called when shutting down.
-        fn drain(self: *Self) !void {
-            // This call is only useful if pending > 0.
-            //
-            // It is currently impossible to have pending == 0 after an iteration of the main loop because:
-            // * if no accept waiting maybeAccept `pending` will increase by 2.
-            // * if an accept is waiting but we didn't get a connection, `pending` must still be >= 1.
-            // * if an accept is waiting and we got a connection, the previous processCompletions call
-            //   increased `pending` while doing request processing.
-            // * if no accept waiting and too many connections, the previous processCompletions call
-            //   increased `pending` while doing request processing.
-            //
-            // But to be extra sure we do this submit call outside the drain loop to ensure we have flushed all queued SQEs
-            // submitted in the last processCompletions call in the main loop.
-
-            _ = try self.submit(0);
-
-            while (self.pending > 0) {
-                _ = try self.submit(0);
-                _ = try self.processCompletions(self.pending);
-            }
-        }
-
-        /// Submits all pending SQE to the kernel, if any.
-        /// Waits for `nr` events to be completed before returning (0 means don't wait).
-        ///
-        /// This also increments `pending` by the number of events submitted.
-        ///
-        /// Returns the number of events submitted.
-        fn submit(self: *Self, nr: u32) !usize {
-            const n = try self.ring.submit_and_wait(nr);
-            self.pending += n;
-            return n;
-        }
-
-        /// Process all ready CQEs, if any.
-        /// Waits for `nr` events to be completed before processing begins (0 means don't wait).
-        ///
-        /// This also decrements `pending` by the number of events processed.
-        ///
-        /// Returnsd the number of events processed.
-        fn processCompletions(self: *Self, nr: usize) !usize {
-            // TODO(vincent): how should we handle EAGAIN and EINTR ? right now they will shutdown the server.
-            const cqe_count = try self.ring.copy_cqes(self.cqes, @intCast(u32, nr));
-
-            for (self.cqes[0..cqe_count]) |cqe| {
-                assert(cqe.user_data != 0);
-
-                // We know that a SQE/CQE is _always_ associated with a pointer of type Callback.
-
-                var cb = @intToPtr(*CallbackType, cqe.user_data);
-                defer self.callbacks.put(cb);
-
-                // Call the provided function with the proper context.
-                //
-                // Note that while the callback function signature can return an error we don't bubble them up
-                // simply because we can't shutdown the server due to a processing error.
-
-                cb.call(cb.server, cb.client_context, cqe) catch |err| {
-                    self.handleCallbackError(cb.client_context, err);
-                };
-            }
-            self.pending -= cqe_count;
-            return cqe_count;
-        }
-
-        fn handleCallbackError(self: *Self, client_opt: ?*ClientState, err: anyerror) void {
-            if (err == error.Canceled) return;
-
-            if (client_opt) |client| {
-                switch (err) {
-                    error.ConnectionResetByPeer => {
-                        logger.info("ctx#{s:<4} client fd={d} disconnected", .{ self.user_context, client.fd });
-                    },
-                    error.UnexpectedEOF => {
-                        logger.debug("ctx#{s:<4} unexpected eof", .{self.user_context});
-                    },
-                    else => {
-                        logger.err("ctx#{s:<4} unexpected error {!}", .{ self.user_context, err });
-                    },
-                }
-
-                _ = self.submitClose(client, client.fd, onCloseClient) catch {};
-            } else {
-                logger.err("ctx#{s:<4} unexpected error {!}", .{ self.user_context, err });
-            }
-        }
-
-        fn submitAccept(self: *Self) !*io_uring_sqe {
-            if (build_options.debug_accepts) {
-                logger.debug("ctx#{s:<4} submitting accept on {d}", .{
-                    self.user_context,
-                    self.listener.server_fd,
-                });
-            }
-
-            var tmp = try self.callbacks.get(onAccept, .{});
-
-            return try self.ring.accept(
-                @ptrToInt(tmp),
-                self.listener.server_fd,
-                &self.listener.peer_addr.any,
-                &self.listener.peer_addr_size,
-                0,
-            );
-        }
-
-        fn submitAcceptLinkTimeout(self: *Self) !*io_uring_sqe {
-            if (build_options.debug_accepts) {
-                logger.debug("ctx#{s:<4} submitting link timeout", .{self.user_context});
-            }
-
-            var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
-            return self.ring.link_timeout(
-                @ptrToInt(tmp),
-                &self.listener.timeout,
-                0,
-            );
-        }
-
-        fn submitStandaloneClose(self: *Self, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} submitting close of {d}", .{
-                self.user_context,
-                fd,
-            });
-
-            var tmp = try self.callbacks.get(cb, .{});
-            return self.ring.close(
-                @ptrToInt(tmp),
-                fd,
-            );
-        }
-
-        fn submitClose(self: *Self, client: *ClientState, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting close of {d}", .{
-                self.user_context,
-                client.peer.addr,
-                fd,
-            });
-
-            var tmp = try self.callbacks.get(cb, .{client});
-            return self.ring.close(
-                @ptrToInt(tmp),
-                fd,
-            );
-        }
-
-        fn onAccept(self: *Self, cqe: os.linux.io_uring_cqe) !void {
-            defer self.listener.accept_waiting = false;
-
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .INTR => {
-                    logger.debug("ctx#{s:<4} ON ACCEPT interrupted", .{self.user_context});
-                    return error.Canceled;
-                },
-                .CANCELED => {
-                    if (build_options.debug_accepts) {
-                        logger.debug("ctx#{s:<4} ON ACCEPT timed out", .{self.user_context});
-                    }
-                    return error.Canceled;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} ON ACCEPT unexpected errno={}", .{ self.user_context, err });
-                    return error.Unexpected;
-                },
-            }
-
-            logger.debug("ctx#{s:<4} ON ACCEPT accepting connection from {}", .{ self.user_context, self.listener.peer_addr });
-
-            const client_fd = @intCast(os.socket_t, cqe.res);
-
-            var client = try self.root_allocator.create(ClientState);
-            errdefer self.root_allocator.destroy(client);
-
-            try client.init(
-                self.root_allocator,
-                self.listener.peer_addr,
-                client_fd,
-                self.options.max_buffer_size,
-            );
-            errdefer client.deinit();
-
-            try self.clients.append(client);
-            _ = try self.submitRead(client, client_fd, 0, onReadRequest);
-        }
-
-        fn onAcceptLinkTimeout(self: *Self, cqe: os.linux.io_uring_cqe) !void {
-            switch (cqe.err()) {
-                .CANCELED => {
-                    if (build_options.debug_accepts) {
-                        logger.debug("ctx#{s:<4} ON LINK TIMEOUT operation finished, timeout canceled", .{self.user_context});
-                    }
-                },
-                .ALREADY => {
-                    if (build_options.debug_accepts) {
-                        logger.debug("ctx#{s:<4} ON LINK TIMEOUT operation already finished before timeout expired", .{self.user_context});
-                    }
-                },
-                .TIME => {
-                    if (build_options.debug_accepts) {
-                        logger.debug("ctx#{s:<4} ON LINK TIMEOUT timeout finished before accept", .{self.user_context});
-                    }
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} ON LINK TIMEOUT unexpected errno={}", .{ self.user_context, err });
-                    return error.Unexpected;
-                },
-            }
-        }
-
-        fn onCloseClient(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
-            logger.debug("ctx#{s:<4} addr={} ON CLOSE CLIENT fd={}", .{
-                self.user_context,
-                client.peer.addr,
-                client.fd,
-            });
-
-            // Cleanup resources
+        for (self.clients.items) |client| {
             client.deinit();
             self.root_allocator.destroy(client);
+        }
+        self.clients.deinit();
 
-            // Remove client from list
-            const maybe_pos: ?usize = for (self.clients.items) |item, i| {
-                if (item == client) {
-                    break i;
-                }
-            } else blk: {
-                break :blk null;
+        self.callbacks.deinit();
+        self.root_allocator.free(self.cqes);
+        self.ring.deinit();
+    }
+
+    /// Runs the main loop until the `running` boolean is false.
+    ///
+    /// `accept_timeout` controls how much time the loop can wait for an accept operation to finish.
+    /// This duration is the lower bound duration before the main loop can stop when `running` is false;
+    pub fn run(self: *Self, accept_timeout: u63) !void {
+        // TODO(vincent): we don't properly shutdown the peer sockets; we should do that.
+        // This can be done using standard close(2) calls I think.
+
+        while (self.running.load(.SeqCst)) {
+            // first step: (maybe) submit and accept with a link_timeout linked to it.
+            //
+            // Nothing is submitted if:
+            // * a previous accept operation is already waiting.
+            // * the number of connected clients reached the predefined limit.
+            try self.maybeAccept(accept_timeout);
+
+            // second step: submit to the kernel all previous queued SQE.
+            //
+            // SQEs might be queued by the maybeAccept call above or by the processCompletions call below, but
+            // obviously in that case its SQEs queued from the _previous iteration_ that are submitted to the kernel.
+            //
+            // Additionally we wait for at least 1 CQE to be available, if none is available the thread will be put to sleep by the kernel.
+            // Note that this doesn't work if the uring is setup with busy-waiting.
+            const submitted = try self.submit(1);
+
+            // third step: process all available CQEs.
+            //
+            // This asks the kernel to wait for at least `submitted` CQE to be available.
+            // Since we successfully submitted that many SQEs it is guaranteed we will _at some point_
+            // get that many CQEs but there's no guarantee they will be available instantly; if the
+            // kernel lags in processing the SQEs we can have a delay in getting the CQEs.
+            // This is further accentuated by the number of pending SQEs we can have.
+            //
+            // One example would be submitting a lot of fdatasync operations on slow devices.
+            _ = try self.processCompletions(submitted);
+        }
+        try self.drain();
+    }
+
+    fn maybeAccept(self: *Self, timeout: u63) !void {
+        if (!self.running.load(.SeqCst)) {
+            // we must stop: stop accepting connections.
+            return;
+        }
+        if (self.listener.accept_waiting or self.clients.items.len >= self.options.max_connections) {
+            return;
+        }
+
+        // Queue an accept and link it to a timeout.
+
+        var sqe = try self.submitAccept();
+        sqe.flags |= os.linux.IOSQE_IO_LINK;
+
+        self.listener.timeout.tv_sec = 0;
+        self.listener.timeout.tv_nsec = timeout;
+
+        _ = try self.submitAcceptLinkTimeout();
+
+        self.listener.accept_waiting = true;
+    }
+
+    /// Continuously submit SQEs and process completions until there are
+    /// no more pending operations.
+    ///
+    /// This must be called when shutting down.
+    fn drain(self: *Self) !void {
+        // This call is only useful if pending > 0.
+        //
+        // It is currently impossible to have pending == 0 after an iteration of the main loop because:
+        // * if no accept waiting maybeAccept `pending` will increase by 2.
+        // * if an accept is waiting but we didn't get a connection, `pending` must still be >= 1.
+        // * if an accept is waiting and we got a connection, the previous processCompletions call
+        //   increased `pending` while doing request processing.
+        // * if no accept waiting and too many connections, the previous processCompletions call
+        //   increased `pending` while doing request processing.
+        //
+        // But to be extra sure we do this submit call outside the drain loop to ensure we have flushed all queued SQEs
+        // submitted in the last processCompletions call in the main loop.
+
+        _ = try self.submit(0);
+
+        while (self.pending > 0) {
+            _ = try self.submit(0);
+            _ = try self.processCompletions(self.pending);
+        }
+    }
+
+    /// Submits all pending SQE to the kernel, if any.
+    /// Waits for `nr` events to be completed before returning (0 means don't wait).
+    ///
+    /// This also increments `pending` by the number of events submitted.
+    ///
+    /// Returns the number of events submitted.
+    fn submit(self: *Self, nr: u32) !usize {
+        const n = try self.ring.submit_and_wait(nr);
+        self.pending += n;
+        return n;
+    }
+
+    /// Process all ready CQEs, if any.
+    /// Waits for `nr` events to be completed before processing begins (0 means don't wait).
+    ///
+    /// This also decrements `pending` by the number of events processed.
+    ///
+    /// Returnsd the number of events processed.
+    fn processCompletions(self: *Self, nr: usize) !usize {
+        // TODO(vincent): how should we handle EAGAIN and EINTR ? right now they will shutdown the server.
+        const cqe_count = try self.ring.copy_cqes(self.cqes, @intCast(u32, nr));
+
+        for (self.cqes[0..cqe_count]) |cqe| {
+            assert(cqe.user_data != 0);
+
+            // We know that a SQE/CQE is _always_ associated with a pointer of type Callback.
+
+            var cb = @intToPtr(*CallbackType, cqe.user_data);
+            defer self.callbacks.put(cb);
+
+            // Call the provided function with the proper context.
+            //
+            // Note that while the callback function signature can return an error we don't bubble them up
+            // simply because we can't shutdown the server due to a processing error.
+
+            cb.call(cb.server, cb.client_context, cqe) catch |err| {
+                self.handleCallbackError(cb.client_context, err);
             };
-            if (maybe_pos) |pos| _ = self.clients.orderedRemove(pos);
+        }
+        self.pending -= cqe_count;
+        return cqe_count;
+    }
 
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                else => |err| {
-                    logger.err("ctx#{s:<4} unexpected errno={}", .{ self.user_context, err });
-                    return error.Unexpected;
+    fn handleCallbackError(self: *Self, client_opt: ?*ClientState, err: anyerror) void {
+        if (err == error.Canceled) return;
+
+        if (client_opt) |client| {
+            switch (err) {
+                error.ConnectionResetByPeer => {
+                    logger.info("ctx#{} client fd={d} disconnected", .{ self.user_context, client.fd });
+                },
+                error.UnexpectedEOF => {
+                    logger.debug("ctx#{} unexpected eof", .{self.user_context});
+                },
+                else => {
+                    logger.err("ctx#{} unexpected error {!}", .{ self.user_context, err });
                 },
             }
+
+            _ = self.submitClose(client, client.fd, onCloseClient) catch {};
+        } else {
+            logger.err("ctx#{} unexpected error {!}", .{ self.user_context, err });
+        }
+    }
+
+    fn submitAccept(self: *Self) !*io_uring_sqe {
+        if (build_options.debug_accepts) {
+            logger.debug("ctx#{} submitting accept on {d}", .{
+                self.user_context,
+                self.listener.server_fd,
+            });
         }
 
-        fn onClose(self: *Self, cqe: os.linux.io_uring_cqe) !void {
-            logger.debug("ctx#{s:<4} ON CLOSE", .{self.user_context});
+        var tmp = try self.callbacks.get(onAccept, .{});
 
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                else => |err| {
-                    logger.err("ctx#{s:<4} unexpected errno={}", .{ self.user_context, err });
-                    return error.Unexpected;
-                },
-            }
+        return try self.ring.accept(
+            @ptrToInt(tmp),
+            self.listener.server_fd,
+            &self.listener.peer_addr.any,
+            &self.listener.peer_addr_size,
+            0,
+        );
+    }
+
+    fn submitAcceptLinkTimeout(self: *Self) !*io_uring_sqe {
+        if (build_options.debug_accepts) {
+            logger.debug("ctx#{} submitting link timeout", .{self.user_context});
         }
 
-        fn onReadRequest(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .PIPE => {
-                    logger.err("ctx#{s:<4} addr={} broken pipe", .{ self.user_context, client.peer.addr });
-                    return error.BrokenPipe;
-                },
-                .CONNRESET => {
-                    logger.debug("ctx#{s:<4} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
-                    return error.ConnectionResetByPeer;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
-            }
-            if (cqe.res <= 0) {
-                return error.UnexpectedEOF;
-            }
+        var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
+        return self.ring.link_timeout(
+            @ptrToInt(tmp),
+            &self.listener.timeout,
+            0,
+        );
+    }
 
-            const read = @intCast(usize, cqe.res);
-            logger.debug("ctx#{s:<4} addr={} ON READ REQUEST read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+    fn submitStandaloneClose(self: *Self, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} submitting close of {d}", .{
+            self.user_context,
+            fd,
+        });
 
-            const previous_len = client.buffer.items.len;
-            try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        var tmp = try self.callbacks.get(cb, .{});
+        return self.ring.close(
+            @ptrToInt(tmp),
+            fd,
+        );
+    }
 
-            if (try parseRequest(previous_len, client.buffer.items)) |result| {
-                client.request_state.parse_result = result;
-                try processRequest(self, client);
-            } else {
-                // Not enough data, read more.
-                logger.debug("ctx#{s:<4} addr={} HTTP request incomplete, submitting read", .{ self.user_context, client.peer.addr });
-                _ = try self.submitRead(client, client.fd, 0, onReadRequest);
-            }
+    fn submitClose(self: *Self, client: *ClientState, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} addr={} submitting close of {d}", .{
+            self.user_context,
+            client.peer.addr,
+            fd,
+        });
+
+        var tmp = try self.callbacks.get(cb, .{client});
+        return self.ring.close(
+            @ptrToInt(tmp),
+            fd,
+        );
+    }
+
+    fn onAccept(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+        defer self.listener.accept_waiting = false;
+
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .INTR => {
+                logger.debug("ctx#{} ON ACCEPT interrupted", .{self.user_context});
+                return error.Canceled;
+            },
+            .CANCELED => {
+                if (build_options.debug_accepts) {
+                    logger.debug("ctx#{} ON ACCEPT timed out", .{self.user_context});
+                }
+                return error.Canceled;
+            },
+            else => |err| {
+                logger.err("ctx#{} ON ACCEPT unexpected errno={}", .{ self.user_context, err });
+                return error.Unexpected;
+            },
         }
 
-        fn onWriteResponseBuffer(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .PIPE => {
-                    logger.err("ctx#{s:<4} addr={} broken pipe", .{ self.user_context, client.peer.addr });
-                    return error.BrokenPipe;
-                },
-                .CONNRESET => {
-                    logger.err("ctx#{s:<4} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
-                    return error.ConnectionResetByPeer;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
+        logger.debug("ctx#{} ON ACCEPT accepting connection from {}", .{ self.user_context, self.listener.peer_addr });
+
+        const client_fd = @intCast(os.socket_t, cqe.res);
+
+        var client = try self.root_allocator.create(ClientState);
+        errdefer self.root_allocator.destroy(client);
+
+        try client.init(
+            self.root_allocator,
+            self.listener.peer_addr,
+            client_fd,
+            self.options.max_buffer_size,
+        );
+        errdefer client.deinit();
+
+        try self.clients.append(client);
+        _ = try self.submitRead(client, client_fd, 0, onReadRequest);
+    }
+
+    fn onAcceptLinkTimeout(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+        switch (cqe.err()) {
+            .CANCELED => {
+                if (build_options.debug_accepts) {
+                    logger.debug("ctx#{} ON LINK TIMEOUT operation finished, timeout canceled", .{self.user_context});
+                }
+            },
+            .ALREADY => {
+                if (build_options.debug_accepts) {
+                    logger.debug("ctx#{} ON LINK TIMEOUT operation already finished before timeout expired", .{self.user_context});
+                }
+            },
+            .TIME => {
+                if (build_options.debug_accepts) {
+                    logger.debug("ctx#{} ON LINK TIMEOUT timeout finished before accept", .{self.user_context});
+                }
+            },
+            else => |err| {
+                logger.err("ctx#{} ON LINK TIMEOUT unexpected errno={}", .{ self.user_context, err });
+                return error.Unexpected;
+            },
+        }
+    }
+
+    fn onCloseClient(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
+        logger.debug("ctx#{} addr={} ON CLOSE CLIENT fd={}", .{
+            self.user_context,
+            client.peer.addr,
+            client.fd,
+        });
+
+        // Cleanup resources
+        client.deinit();
+        self.root_allocator.destroy(client);
+
+        // Remove client from list
+        const maybe_pos: ?usize = for (self.clients.items) |item, i| {
+            if (item == client) {
+                break i;
             }
+        } else blk: {
+            break :blk null;
+        };
+        if (maybe_pos) |pos| _ = self.clients.orderedRemove(pos);
 
-            const written = @intCast(usize, cqe.res);
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            else => |err| {
+                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                return error.Unexpected;
+            },
+        }
+    }
 
-            if (written < client.buffer.items.len) {
-                // Short write, write the remaining data
+    fn onClose(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+        logger.debug("ctx#{} ON CLOSE", .{self.user_context});
 
-                // Remove the already written data
-                try client.buffer.replaceRange(0, written, &[0]u8{});
-                _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
-                return;
-            }
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            else => |err| {
+                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                return error.Unexpected;
+            },
+        }
+    }
 
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE done", .{ self.user_context, client.peer.addr });
+    fn onReadRequest(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .PIPE => {
+                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                return error.BrokenPipe;
+            },
+            .CONNRESET => {
+                logger.debug("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                return error.ConnectionResetByPeer;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+        if (cqe.res <= 0) {
+            return error.UnexpectedEOF;
+        }
 
-            // Response written, read the next request
-            client.request_state = .{};
-            client.buffer.clearRetainingCapacity();
+        const read = @intCast(usize, cqe.res);
+        logger.debug("ctx#{} addr={} ON READ REQUEST read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+
+        const previous_len = client.buffer.items.len;
+        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+
+        if (try parseRequest(previous_len, client.buffer.items)) |result| {
+            client.request_state.parse_result = result;
+            try processRequest(self, client);
+        } else {
+            // Not enough data, read more.
+            logger.debug("ctx#{} addr={} HTTP request incomplete, submitting read", .{ self.user_context, client.peer.addr });
             _ = try self.submitRead(client, client.fd, 0, onReadRequest);
         }
+    }
 
-        fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
-            logger.debug("ctx#{s:<4} addr={} ON CLOSE RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                else => |err| {
-                    logger.err("ctx#{s:<4} unexpected errno={}", .{ self.user_context, err });
-                    return error.Unexpected;
-                },
-            }
+    fn onWriteResponseBuffer(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .PIPE => {
+                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                return error.BrokenPipe;
+            },
+            .CONNRESET => {
+                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                return error.ConnectionResetByPeer;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
         }
 
-        fn onWriteResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            assert(client.buffer.items.len > 0);
+        const written = @intCast(usize, cqe.res);
 
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .PIPE => {
-                    logger.err("ctx#{s:<4} addr={} broken pipe", .{ self.user_context, client.peer.addr });
-                    return error.BrokenPipe;
-                },
-                .CONNRESET => {
-                    logger.err("ctx#{s:<4} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
-                    return error.ConnectionResetByPeer;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
-            }
-            if (cqe.res <= 0) {
-                return error.UnexpectedEOF;
-            }
+        if (written < client.buffer.items.len) {
+            // Short write, write the remaining data
 
-            const written = @intCast(usize, cqe.res);
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{ self.user_context, client.peer.addr, written, client.fd });
+            // Remove the already written data
+            try client.buffer.replaceRange(0, written, &[0]u8{});
+            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+            return;
+        }
 
-            if (written < client.buffer.items.len) {
-                // Short write, write the remaining data
+        logger.debug("ctx#{} addr={} ON WRITE RESPONSE done", .{ self.user_context, client.peer.addr });
 
-                // Remove the already written data
-                try client.buffer.replaceRange(0, written, &[0]u8{});
+        // Response written, read the next request
+        client.request_state = .{};
+        client.buffer.clearRetainingCapacity();
+        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+    }
 
-                _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
-                return;
-            }
+    fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
+        logger.debug("ctx#{} addr={} ON CLOSE RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            else => |err| {
+                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                return error.Unexpected;
+            },
+        }
+    }
 
-            if (client.response_state.file.offset < client.response_state.file.statx_buf.size) {
-                // More data to read from the file, submit another read
+    fn onWriteResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        assert(client.buffer.items.len > 0);
 
-                client.buffer.clearRetainingCapacity();
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .PIPE => {
+                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                return error.BrokenPipe;
+            },
+            .CONNRESET => {
+                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                return error.ConnectionResetByPeer;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} ON WRITE RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+        if (cqe.res <= 0) {
+            return error.UnexpectedEOF;
+        }
 
-                const offset = client.response_state.file.offset;
+        const written = @intCast(usize, cqe.res);
+        logger.debug("ctx#{} addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{ self.user_context, client.peer.addr, written, client.fd });
 
-                switch (client.response_state.file.fd) {
-                    .direct => |fd| {
-                        _ = try self.submitRead(client, fd, offset, onReadResponseFile);
-                    },
-                    .registered => |fd| {
-                        var sqe = try self.submitRead(client, fd, offset, onReadResponseFile);
-                        sqe.flags |= os.linux.IOSQE_FIXED_FILE;
-                    },
-                }
-                return;
-            }
+        if (written < client.buffer.items.len) {
+            // Short write, write the remaining data
 
-            logger.debug("ctx#{s:<4} addr={} ON WRITE RESPONSE FILE done", .{ self.user_context, client.peer.addr });
+            // Remove the already written data
+            try client.buffer.replaceRange(0, written, &[0]u8{});
 
-            // Response file written, read the next request
+            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
+            return;
+        }
 
-            // Close the response file descriptor
+        if (client.response_state.file.offset < client.response_state.file.statx_buf.size) {
+            // More data to read from the file, submit another read
+
+            client.buffer.clearRetainingCapacity();
+
+            const offset = client.response_state.file.offset;
+
             switch (client.response_state.file.fd) {
                 .direct => |fd| {
-                    _ = try self.submitClose(client, fd, onCloseResponseFile);
-                    client.response_state.file.fd = .{ .direct = -1 };
+                    _ = try self.submitRead(client, fd, offset, onReadResponseFile);
                 },
-                .registered => {},
+                .registered => |fd| {
+                    var sqe = try self.submitRead(client, fd, offset, onReadResponseFile);
+                    sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+                },
             }
-
-            // Reset the client state
-            client.reset();
-            _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+            return;
         }
 
-        fn onReadResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} ON READ RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
-            }
-            if (cqe.res <= 0) {
-                return error.UnexpectedEOF;
-            }
+        logger.debug("ctx#{} addr={} ON WRITE RESPONSE FILE done", .{ self.user_context, client.peer.addr });
 
-            const read = @intCast(usize, cqe.res);
-            client.response_state.file.offset += read;
+        // Response file written, read the next request
 
-            logger.debug("ctx#{s:<4} addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
-                self.user_context,
-                client.peer.addr,
-                read,
-                client.response_state.file.fd,
-                std.fmt.fmtSliceEscapeLower(client.temp_buffer[0..read]),
-            });
-
-            try client.buffer.appendSlice(client.temp_buffer[0..read]);
-            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
+        // Close the response file descriptor
+        switch (client.response_state.file.fd) {
+            .direct => |fd| {
+                _ = try self.submitClose(client, fd, onCloseResponseFile);
+                client.response_state.file.fd = .{ .direct = -1 };
+            },
+            .registered => {},
         }
 
-        fn onStatxResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            switch (cqe.err()) {
-                .SUCCESS => {
-                    assert(client.buffer.items.len == 0);
-                },
-                .CANCELED => {
-                    return error.Canceled;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} ON STATX RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
-            }
+        // Reset the client state
+        client.reset();
+        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+    }
 
-            logger.debug("ctx#{s:<4} addr={} ON STATX RESPONSE FILE path=\"{s}\" fd={s}, size={s}", .{
+    fn onReadResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            else => |err| {
+                logger.err("ctx#{} addr={} ON READ RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+        if (cqe.res <= 0) {
+            return error.UnexpectedEOF;
+        }
+
+        const read = @intCast(usize, cqe.res);
+        client.response_state.file.offset += read;
+
+        logger.debug("ctx#{} addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
+            self.user_context,
+            client.peer.addr,
+            read,
+            client.response_state.file.fd,
+            std.fmt.fmtSliceEscapeLower(client.temp_buffer[0..read]),
+        });
+
+        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
+    }
+
+    fn onStatxResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        switch (cqe.err()) {
+            .SUCCESS => {
+                assert(client.buffer.items.len == 0);
+            },
+            .CANCELED => {
+                return error.Canceled;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} ON STATX RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+
+        logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE path=\"{s}\" fd={s}, size={s}", .{
+            self.user_context,
+            client.peer.addr,
+            client.response_state.file.path,
+            client.response_state.file.fd,
+            std.fmt.fmtIntSizeBin(client.response_state.file.statx_buf.size),
+        });
+
+        // Prepare the preambule + headers.
+        // This will be written to the socket on the next write operation following
+        // the first read operation for this file.
+        client.response_state.status_code = .ok;
+        try client.startWritingResponse(client.response_state.file.statx_buf.size);
+
+        // If the file has already been registered, use its registered file descriptor.
+        if (self.registered_files.get(client.response_state.file.path)) |entry| {
+            logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE file descriptor already registered, path=\"{s}\" registered fd={d}", .{
                 self.user_context,
                 client.peer.addr,
                 client.response_state.file.path,
-                client.response_state.file.fd,
-                std.fmt.fmtIntSizeBin(client.response_state.file.statx_buf.size),
+                entry.fd,
             });
 
-            // Prepare the preambule + headers.
-            // This will be written to the socket on the next write operation following
-            // the first read operation for this file.
-            client.response_state.status_code = .ok;
-            try client.startWritingResponse(client.response_state.file.statx_buf.size);
-
-            // If the file has already been registered, use its registered file descriptor.
-            if (self.registered_files.get(client.response_state.file.path)) |entry| {
-                logger.debug("ctx#{s:<4} addr={} ON STATX RESPONSE FILE file descriptor already registered, path=\"{s}\" registered fd={d}", .{
-                    self.user_context,
-                    client.peer.addr,
-                    client.response_state.file.path,
-                    entry.fd,
-                });
-
-                var sqe = try self.submitRead(client, entry.fd, 0, onReadResponseFile);
-                sqe.flags |= os.linux.IOSQE_FIXED_FILE;
-                return;
-            }
-
-            // The file has not yet been registered, try to do it
-
-            // Assert the file descriptor is of type .direct, if it isn't it's a bug.
-            assert(client.response_state.file.fd == .direct);
-            const fd = client.response_state.file.fd.direct;
-
-            if (self.registered_fds.acquire(fd)) |registered_fd| {
-                // We were able to acquire a registered file descriptor, make use of it.
-
-                logger.debug("ctx#{s:<4} addr={} ON STATX RESPONSE FILE registered file descriptor, path=\"{s}\" registered fd={d}", .{
-                    self.user_context,
-                    client.peer.addr,
-                    client.response_state.file.path,
-                    registered_fd,
-                });
-                client.response_state.file.fd = .{ .registered = registered_fd };
-
-                try self.registered_fds.update(&self.ring);
-
-                var entry = try self.registered_files.getOrPut(client.response_state.file.path);
-                if (!entry.found_existing) {
-                    entry.key_ptr.* = try self.root_allocator.dupeZ(u8, client.response_state.file.path);
-                    entry.value_ptr.* = RegisteredFile{
-                        .fd = registered_fd,
-                        .size = client.response_state.file.statx_buf.size,
-                    };
-                }
-
-                var sqe = try self.submitRead(client, registered_fd, 0, onReadResponseFile);
-                sqe.flags |= os.linux.IOSQE_FIXED_FILE;
-                return;
-            }
-
-            // The file isn't registered and we weren't able to register it, do a standard read.
-            _ = try self.submitRead(client, fd, 0, onReadResponseFile);
+            var sqe = try self.submitRead(client, entry.fd, 0, onReadResponseFile);
+            sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+            return;
         }
 
-        fn onReadBody(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            assert(client.request_state.content_length != null);
-            assert(client.request_state.body != null);
+        // The file has not yet been registered, try to do it
 
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .PIPE => {
-                    logger.err("ctx#{s:<4} addr={} broken pipe", .{ self.user_context, client.peer.addr });
-                    return error.BrokenPipe;
-                },
-                .CONNRESET => {
-                    logger.err("ctx#{s:<4} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
-                    return error.ConnectionResetByPeer;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
+        // Assert the file descriptor is of type .direct, if it isn't it's a bug.
+        assert(client.response_state.file.fd == .direct);
+        const fd = client.response_state.file.fd.direct;
+
+        if (self.registered_fds.acquire(fd)) |registered_fd| {
+            // We were able to acquire a registered file descriptor, make use of it.
+
+            logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE registered file descriptor, path=\"{s}\" registered fd={d}", .{
+                self.user_context,
+                client.peer.addr,
+                client.response_state.file.path,
+                registered_fd,
+            });
+            client.response_state.file.fd = .{ .registered = registered_fd };
+
+            try self.registered_fds.update(&self.ring);
+
+            var entry = try self.registered_files.getOrPut(client.response_state.file.path);
+            if (!entry.found_existing) {
+                entry.key_ptr.* = try self.root_allocator.dupeZ(u8, client.response_state.file.path);
+                entry.value_ptr.* = RegisteredFile{
+                    .fd = registered_fd,
+                    .size = client.response_state.file.statx_buf.size,
+                };
             }
-            if (cqe.res <= 0) {
-                return error.UnexpectedEOF;
-            }
 
-            const read = @intCast(usize, cqe.res);
+            var sqe = try self.submitRead(client, registered_fd, 0, onReadResponseFile);
+            sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+            return;
+        }
 
-            logger.debug("ctx#{s:<4} addr={} ON READ BODY read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+        // The file isn't registered and we weren't able to register it, do a standard read.
+        _ = try self.submitRead(client, fd, 0, onReadResponseFile);
+    }
 
-            try client.buffer.appendSlice(client.temp_buffer[0..read]);
+    fn onReadBody(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        assert(client.request_state.content_length != null);
+        assert(client.request_state.body != null);
+
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .PIPE => {
+                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                return error.BrokenPipe;
+            },
+            .CONNRESET => {
+                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                return error.ConnectionResetByPeer;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+        if (cqe.res <= 0) {
+            return error.UnexpectedEOF;
+        }
+
+        const read = @intCast(usize, cqe.res);
+
+        logger.debug("ctx#{} addr={} ON READ BODY read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+
+        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        client.refreshBody();
+
+        const content_length = client.request_state.content_length.?;
+        const body = client.request_state.body.?;
+
+        if (body.len < content_length) {
+            logger.debug("ctx#{} addr={} buffer len={d} bytes, content length={d} bytes", .{ self.user_context, client.peer.addr, body.len, content_length });
+
+            // Not enough data, read more.
+            _ = try self.submitRead(client, client.fd, 0, onReadBody);
+            return;
+        }
+
+        // Request is complete: call handler
+        try self.callHandler(client);
+    }
+
+    fn onOpenResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
+        assert(client.buffer.items.len == 0);
+
+        switch (cqe.err()) {
+            .SUCCESS => {},
+            .NOENT => {
+                client.temp_buffer_fba.reset();
+
+                logger.warn("ctx#{} addr={} no such file or directory, path=\"{s}\"", .{
+                    self.user_context,
+                    client.peer.addr,
+                    std.fmt.fmtSliceEscapeLower(client.response_state.file.path),
+                });
+
+                try self.submitWriteNotFound(client);
+                return;
+            },
+            else => |err| {
+                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                return error.Unexpected;
+            },
+        }
+
+        client.response_state.file.fd = .{ .direct = @intCast(os.fd_t, cqe.res) };
+
+        logger.debug("ctx#{} addr={} ON OPEN RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
+
+        client.temp_buffer_fba.reset();
+    }
+
+    fn callHandler(self: *Self, client: *ClientState) !void {
+        // Create a request for the handler.
+        // This doesn't own any data and it only lives for the duration of this function call.
+        const req = try Request.create(
+            client.request_state.parse_result.raw_request,
+            client.request_state.body,
+        );
+
+        // Call the user provided handler to get a response.
+        const response = try self.handler(
+            client.gpa,
+            client.peer,
+            req,
+        );
+        // TODO(vincent): cleanup in case of errors ?
+        // errdefer client.reset();
+
+        // At this point the request data is no longer needed so we can clear the buffer.
+        client.buffer.clearRetainingCapacity();
+
+        // Process the response:
+        // * `response` contains a simple buffer that we can write to the socket straight away.
+        // * `send_file` contains a file path that we need to open and statx before we can read/write it to the socket.
+
+        switch (response) {
+            .response => |res| {
+                client.response_state.status_code = res.status_code;
+                client.response_state.headers = res.headers;
+
+                try client.startWritingResponse(res.data.len);
+                try client.buffer.appendSlice(res.data);
+
+                _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+            },
+            .send_file => |res| {
+                client.response_state.status_code = res.status_code;
+                client.response_state.headers = res.headers;
+                client.response_state.file.path = try client.temp_buffer_fba.allocator().dupeZ(u8, res.path);
+
+                if (self.registered_files.get(client.response_state.file.path)) |registered_file| {
+                    logger.debug("ctx#{} addr={} FILE path=\"{s}\" is already registered, fd={d}", .{
+                        self.user_context,
+                        client.peer.addr,
+                        client.response_state.file.path,
+                        registered_file.fd,
+                    });
+
+                    client.response_state.file.fd = .{ .registered = registered_file.fd };
+                    client.temp_buffer_fba.reset();
+
+                    // Prepare the preambule + headers.
+                    // This will be written to the socket on the next write operation following
+                    // the first read operation for this file.
+                    client.response_state.status_code = .ok;
+                    try client.startWritingResponse(registered_file.size);
+
+                    // Now read the response file
+                    var sqe = try self.submitRead(client, registered_file.fd, 0, onReadResponseFile);
+                    sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+                } else {
+                    var sqe = try self.submitOpenFile(
+                        client,
+                        client.response_state.file.path,
+                        os.linux.O.RDONLY | os.linux.O.NOFOLLOW,
+                        0o644,
+                        onOpenResponseFile,
+                    );
+                    sqe.flags |= os.linux.IOSQE_IO_LINK;
+
+                    _ = try self.submitStatxFile(
+                        client,
+                        client.response_state.file.path,
+                        os.linux.AT.SYMLINK_NOFOLLOW,
+                        os.linux.STATX_SIZE,
+                        &client.response_state.file.statx_buf,
+                        onStatxResponseFile,
+                    );
+                }
+            },
+        }
+    }
+
+    fn submitWriteNotFound(self: *Self, client: *ClientState) !void {
+        logger.debug("ctx#{} addr={} returning 404 Not Found", .{
+            self.user_context,
+            client.peer.addr,
+        });
+
+        const static_response = "Not Found";
+
+        client.response_state.status_code = .not_found;
+        try client.startWritingResponse(static_response.len);
+        try client.buffer.appendSlice(static_response);
+
+        _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+    }
+
+    fn processRequest(self: *Self, client: *ClientState) !void {
+        // Try to find the content length. If there's one we switch to reading the body.
+        const content_length = try client.request_state.parse_result.raw_request.getContentLength();
+        if (content_length) |n| {
+            logger.debug("ctx#{} addr={} content length: {d}", .{ self.user_context, client.peer.addr, n });
+
+            client.request_state.content_length = n;
             client.refreshBody();
 
-            const content_length = client.request_state.content_length.?;
-            const body = client.request_state.body.?;
+            if (client.request_state.body) |body| {
+                logger.debug("ctx#{} addr={} body incomplete, usable={d} bytes, content length: {d} bytes", .{
+                    self.user_context,
+                    client.peer.addr,
+                    body.len,
+                    n,
+                });
 
-            if (body.len < content_length) {
-                logger.debug("ctx#{s:<4} addr={} buffer len={d} bytes, content length={d} bytes", .{ self.user_context, client.peer.addr, body.len, content_length });
-
-                // Not enough data, read more.
                 _ = try self.submitRead(client, client.fd, 0, onReadBody);
                 return;
             }
 
             // Request is complete: call handler
             try self.callHandler(client);
+            return;
         }
 
-        fn onOpenResponseFile(self: *Self, client: *ClientState, cqe: io_uring_cqe) !void {
-            assert(client.buffer.items.len == 0);
+        // Otherwise it's a simple call to the handler.
+        try self.callHandler(client);
+    }
 
-            switch (cqe.err()) {
-                .SUCCESS => {},
-                .NOENT => {
-                    client.temp_buffer_fba.reset();
+    fn submitRead(self: *Self, client: *ClientState, fd: os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} addr={} submitting read from {d}, offset {d}", .{ self.user_context, client.peer.addr, fd, offset });
 
-                    logger.warn("ctx#{s:<4} addr={} no such file or directory, path=\"{s}\"", .{
-                        self.user_context,
-                        client.peer.addr,
-                        std.fmt.fmtSliceEscapeLower(client.response_state.file.path),
-                    });
+        var tmp = try self.callbacks.get(cb, .{client});
+        return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
+    }
 
-                    try self.submitWriteNotFound(client);
-                    return;
-                },
-                else => |err| {
-                    logger.err("ctx#{s:<4} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
-                    return error.Unexpected;
-                },
-            }
+    fn submitWrite(self: *Self, client: *ClientState, fd: os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
+            self.user_context,
+            client.peer.addr,
+            std.fmt.fmtIntSizeBin(client.buffer.items.len),
+            fd,
+            offset,
+            std.fmt.fmtSliceEscapeLower(client.buffer.items),
+        });
 
-            client.response_state.file.fd = .{ .direct = @intCast(os.fd_t, cqe.res) };
+        var tmp = try self.callbacks.get(cb, .{client});
+        return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
+    }
 
-            logger.debug("ctx#{s:<4} addr={} ON OPEN RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
+    fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
-            client.temp_buffer_fba.reset();
-        }
+        var tmp = try self.callbacks.get(cb, .{client});
+        return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
+    }
 
-        fn callHandler(self: *Self, client: *ClientState) !void {
-            // Create a request for the handler.
-            // This doesn't own any data and it only lives for the duration of this function call.
-            const req = try Request.create(
-                client.request_state.parse_result.raw_request,
-                client.request_state.body,
-            );
+    fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
+        logger.debug("ctx#{} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
-            // Call the user provided handler to get a response.
-            const response = try self.handler(
-                self.user_context,
-                client.gpa,
-                client.peer,
-                req,
-            );
-            // TODO(vincent): cleanup in case of errors ?
-            // errdefer client.reset();
-
-            // At this point the request data is no longer needed so we can clear the buffer.
-            client.buffer.clearRetainingCapacity();
-
-            // Process the response:
-            // * `response` contains a simple buffer that we can write to the socket straight away.
-            // * `send_file` contains a file path that we need to open and statx before we can read/write it to the socket.
-
-            switch (response) {
-                .response => |res| {
-                    client.response_state.status_code = res.status_code;
-                    client.response_state.headers = res.headers;
-
-                    try client.startWritingResponse(res.data.len);
-                    try client.buffer.appendSlice(res.data);
-
-                    _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
-                },
-                .send_file => |res| {
-                    client.response_state.status_code = res.status_code;
-                    client.response_state.headers = res.headers;
-                    client.response_state.file.path = try client.temp_buffer_fba.allocator().dupeZ(u8, res.path);
-
-                    if (self.registered_files.get(client.response_state.file.path)) |registered_file| {
-                        logger.debug("ctx#{s:<4} addr={} FILE path=\"{s}\" is already registered, fd={d}", .{
-                            self.user_context,
-                            client.peer.addr,
-                            client.response_state.file.path,
-                            registered_file.fd,
-                        });
-
-                        client.response_state.file.fd = .{ .registered = registered_file.fd };
-                        client.temp_buffer_fba.reset();
-
-                        // Prepare the preambule + headers.
-                        // This will be written to the socket on the next write operation following
-                        // the first read operation for this file.
-                        client.response_state.status_code = .ok;
-                        try client.startWritingResponse(registered_file.size);
-
-                        // Now read the response file
-                        var sqe = try self.submitRead(client, registered_file.fd, 0, onReadResponseFile);
-                        sqe.flags |= os.linux.IOSQE_FIXED_FILE;
-                    } else {
-                        var sqe = try self.submitOpenFile(
-                            client,
-                            client.response_state.file.path,
-                            os.linux.O.RDONLY | os.linux.O.NOFOLLOW,
-                            0o644,
-                            onOpenResponseFile,
-                        );
-                        sqe.flags |= os.linux.IOSQE_IO_LINK;
-
-                        _ = try self.submitStatxFile(
-                            client,
-                            client.response_state.file.path,
-                            os.linux.AT.SYMLINK_NOFOLLOW,
-                            os.linux.STATX_SIZE,
-                            &client.response_state.file.statx_buf,
-                            onStatxResponseFile,
-                        );
-                    }
-                },
-            }
-        }
-
-        fn submitWriteNotFound(self: *Self, client: *ClientState) !void {
-            logger.debug("ctx#{s:<4} addr={} returning 404 Not Found", .{
-                self.user_context,
-                client.peer.addr,
-            });
-
-            const static_response = "Not Found";
-
-            client.response_state.status_code = .not_found;
-            try client.startWritingResponse(static_response.len);
-            try client.buffer.appendSlice(static_response);
-
-            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
-        }
-
-        fn processRequest(self: *Self, client: *ClientState) !void {
-            // Try to find the content length. If there's one we switch to reading the body.
-            const content_length = try client.request_state.parse_result.raw_request.getContentLength();
-            if (content_length) |n| {
-                logger.debug("ctx#{s:<4} addr={} content length: {d}", .{ self.user_context, client.peer.addr, n });
-
-                client.request_state.content_length = n;
-                client.refreshBody();
-
-                if (client.request_state.body) |body| {
-                    logger.debug("ctx#{s:<4} addr={} body incomplete, usable={d} bytes, content length: {d} bytes", .{
-                        self.user_context,
-                        client.peer.addr,
-                        body.len,
-                        n,
-                    });
-
-                    _ = try self.submitRead(client, client.fd, 0, onReadBody);
-                    return;
-                }
-
-                // Request is complete: call handler
-                try self.callHandler(client);
-                return;
-            }
-
-            // Otherwise it's a simple call to the handler.
-            try self.callHandler(client);
-        }
-
-        fn submitRead(self: *Self, client: *ClientState, fd: os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting read from {d}, offset {d}", .{ self.user_context, client.peer.addr, fd, offset });
-
-            var tmp = try self.callbacks.get(cb, .{client});
-            return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
-        }
-
-        fn submitWrite(self: *Self, client: *ClientState, fd: os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
-                self.user_context,
-                client.peer.addr,
-                std.fmt.fmtIntSizeBin(client.buffer.items.len),
-                fd,
-                offset,
-                std.fmt.fmtSliceEscapeLower(client.buffer.items),
-            });
-
-            var tmp = try self.callbacks.get(cb, .{client});
-            return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
-        }
-
-        fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
-
-            var tmp = try self.callbacks.get(cb, .{client});
-            return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
-        }
-
-        fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
-            logger.debug("ctx#{s:<4} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
-
-            var tmp = try self.callbacks.get(cb, .{client});
-            return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);
-        }
-    };
-}
+        var tmp = try self.callbacks.get(cb, .{client});
+        return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);
+    }
+};
