@@ -1,7 +1,6 @@
 const std = @import("std");
 const heap = std.heap;
 const os = std.os;
-const time = std.time;
 
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
@@ -139,7 +138,7 @@ pub fn main() anyerror!void {
             .{},
             struct {
                 fn worker(server: *httpserver.Server(*ServerContext)) !void {
-                    return server.run(1 * time.ns_per_s);
+                    return server.run(1 * std.time.ns_per_s);
                 }
             }.worker,
             .{&item.server},

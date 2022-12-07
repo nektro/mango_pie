@@ -3,7 +3,6 @@ const heap = std.heap;
 const net = std.net;
 const os = std.os;
 const testing = std.testing;
-const time = std.time;
 
 const Atomic = std.atomic.Atomic;
 
@@ -61,7 +60,7 @@ const TestHarness = struct {
             .{},
             struct {
                 fn worker(server: *httpserver.Server(*Self)) !void {
-                    return server.run(10 * time.ns_per_ms);
+                    return server.run(10 * std.time.ns_per_ms);
                 }
             }.worker,
             .{&res.server},
