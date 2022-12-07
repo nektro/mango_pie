@@ -7,7 +7,6 @@ const testing = std.testing;
 const time = std.time;
 
 const Atomic = std.atomic.Atomic;
-const assert = std.debug.assert;
 
 const httpserver = @import("lib.zig");
 

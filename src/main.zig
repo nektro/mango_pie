@@ -1,18 +1,10 @@
 const std = @import("std");
-const debug = std.debug;
-const fmt = std.fmt;
 const heap = std.heap;
-const io = std.io;
-const net = std.net;
 const os = std.os;
 const time = std.time;
 
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
-
-const IO_Uring = std.os.linux.IO_Uring;
-const io_uring_cqe = std.os.linux.io_uring_cqe;
-const io_uring_sqe = std.os.linux.io_uring_sqe;
 
 const httpserver = @import("lib.zig");
 

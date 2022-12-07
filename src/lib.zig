@@ -4,10 +4,8 @@ const ascii = std.ascii;
 const debug = std.debug;
 const fmt = std.fmt;
 const heap = std.heap;
-const io = std.io;
 const net = std.net;
 const os = std.os;
-const time = std.time;
 
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;

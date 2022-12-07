@@ -1,6 +1,4 @@
 const std = @import("std");
-const heap = std.heap;
-const io = std.io;
 
 const c = @cImport({
     @cInclude("curl/curl.h");
