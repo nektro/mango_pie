@@ -123,7 +123,6 @@ pub fn main() anyerror!void {
             },
             &global_running,
             server_fd,
-            {},
             ServerContext.handleRequest,
         );
     }

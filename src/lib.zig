@@ -389,7 +389,6 @@ pub const Server = struct {
     registered_fds: RegisteredFileDescriptors,
     registered_files: std.StringHashMap(RegisteredFile),
 
-    user_context: void,
     handler: RequestHandler,
 
     /// initializes a Server object.
@@ -406,8 +405,6 @@ pub const Server = struct {
         running: *Atomic(bool),
         /// must be a socket properly initialized with listen(2) and bind(2) which will be used for accept(2) operations.
         server_fd: os.socket_t,
-        /// user provided context that will be passed to the request handlers.
-        user_context: void,
         /// user provied request handler.
         handler: RequestHandler,
     ) !void {
@@ -426,7 +423,6 @@ pub const Server = struct {
             .callbacks = undefined,
             .registered_fds = .{},
             .registered_files = std.StringHashMap(RegisteredFile).init(allocator),
-            .user_context = user_context,
             .handler = handler,
         };
 
@@ -589,25 +585,25 @@ pub const Server = struct {
         if (client_opt) |client| {
             switch (err) {
                 error.ConnectionResetByPeer => {
-                    logger.info("ctx#{} client fd={d} disconnected", .{ self.user_context, client.fd });
+                    logger.info("client fd={d} disconnected", .{client.fd});
                 },
                 error.UnexpectedEOF => {
-                    logger.debug("ctx#{} unexpected eof", .{self.user_context});
+                    logger.debug("unexpected eof", .{});
                 },
                 else => {
-                    logger.err("ctx#{} unexpected error {!}", .{ self.user_context, err });
+                    logger.err("unexpected error {!}", .{err});
                 },
             }
 
             _ = self.submitClose(client, client.fd, onCloseClient) catch {};
         } else {
-            logger.err("ctx#{} unexpected error {!}", .{ self.user_context, err });
+            logger.err("unexpected error {!}", .{err});
         }
     }
 
     fn submitAccept(self: *Self) !*io_uring_sqe {
         if (build_options.debug_accepts) {
-            logger.debug("ctx#{} submitting accept on {d}", .{
+            logger.debug("submitting accept on {d}", .{
                 self.user_context,
                 self.listener.server_fd,
             });
@@ -626,7 +622,7 @@ pub const Server = struct {
 
     fn submitAcceptLinkTimeout(self: *Self) !*io_uring_sqe {
         if (build_options.debug_accepts) {
-            logger.debug("ctx#{} submitting link timeout", .{self.user_context});
+            logger.debug("submitting link timeout", .{});
         }
 
         var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
@@ -638,7 +634,7 @@ pub const Server = struct {
     }
 
     fn submitStandaloneClose(self: *Self, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} submitting close of {d}", .{
+        logger.debug("submitting close of {d}", .{
             self.user_context,
             fd,
         });
@@ -651,11 +647,7 @@ pub const Server = struct {
     }
 
     fn submitClose(self: *Self, client: *ClientState, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} addr={} submitting close of {d}", .{
-            self.user_context,
-            client.peer.addr,
-            fd,
-        });
+        logger.debug("addr={} submitting close of {d}", .{ client.peer.addr, fd });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.close(
@@ -670,22 +662,22 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .INTR => {
-                logger.debug("ctx#{} ON ACCEPT interrupted", .{self.user_context});
+                logger.debug("ON ACCEPT interrupted", .{});
                 return error.Canceled;
             },
             .CANCELED => {
                 if (build_options.debug_accepts) {
-                    logger.debug("ctx#{} ON ACCEPT timed out", .{self.user_context});
+                    logger.debug("ON ACCEPT timed out", .{});
                 }
                 return error.Canceled;
             },
             else => |err| {
-                logger.err("ctx#{} ON ACCEPT unexpected errno={}", .{ self.user_context, err });
+                logger.err("ON ACCEPT unexpected errno={}", .{err});
                 return error.Unexpected;
             },
         }
 
-        logger.debug("ctx#{} ON ACCEPT accepting connection from {}", .{ self.user_context, self.listener.peer_addr });
+        logger.debug("ON ACCEPT accepting connection from {}", .{self.listener.peer_addr});
 
         const client_fd = @intCast(os.socket_t, cqe.res);
 
@@ -705,35 +697,32 @@ pub const Server = struct {
     }
 
     fn onAcceptLinkTimeout(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+        _ = self;
         switch (cqe.err()) {
             .CANCELED => {
                 if (build_options.debug_accepts) {
-                    logger.debug("ctx#{} ON LINK TIMEOUT operation finished, timeout canceled", .{self.user_context});
+                    logger.debug("ON LINK TIMEOUT operation finished, timeout canceled", .{});
                 }
             },
             .ALREADY => {
                 if (build_options.debug_accepts) {
-                    logger.debug("ctx#{} ON LINK TIMEOUT operation already finished before timeout expired", .{self.user_context});
+                    logger.debug("ON LINK TIMEOUT operation already finished before timeout expired", .{});
                 }
             },
             .TIME => {
                 if (build_options.debug_accepts) {
-                    logger.debug("ctx#{} ON LINK TIMEOUT timeout finished before accept", .{self.user_context});
+                    logger.debug("ON LINK TIMEOUT timeout finished before accept", .{});
                 }
             },
             else => |err| {
-                logger.err("ctx#{} ON LINK TIMEOUT unexpected errno={}", .{ self.user_context, err });
+                logger.err("ON LINK TIMEOUT unexpected errno={}", .{err});
                 return error.Unexpected;
             },
         }
     }
 
     fn onCloseClient(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
-        logger.debug("ctx#{} addr={} ON CLOSE CLIENT fd={}", .{
-            self.user_context,
-            client.peer.addr,
-            client.fd,
-        });
+        logger.debug("addr={} ON CLOSE CLIENT fd={}", .{ client.peer.addr, client.fd });
 
         // Cleanup resources
         client.deinit();
@@ -752,19 +741,20 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             else => |err| {
-                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                logger.err("unexpected errno={}", .{err});
                 return error.Unexpected;
             },
         }
     }
 
     fn onClose(self: *Self, cqe: os.linux.io_uring_cqe) !void {
-        logger.debug("ctx#{} ON CLOSE", .{self.user_context});
+        _ = self;
+        logger.debug("ON CLOSE", .{});
 
         switch (cqe.err()) {
             .SUCCESS => {},
             else => |err| {
-                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                logger.err("unexpected errno={}", .{err});
                 return error.Unexpected;
             },
         }
@@ -774,15 +764,15 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
-                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} broken pipe", .{client.peer.addr});
                 return error.BrokenPipe;
             },
             .CONNRESET => {
-                logger.debug("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                logger.debug("addr={} connection reset by peer", .{client.peer.addr});
                 return error.ConnectionResetByPeer;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
@@ -791,7 +781,7 @@ pub const Server = struct {
         }
 
         const read = @intCast(usize, cqe.res);
-        logger.debug("ctx#{} addr={} ON READ REQUEST read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+        logger.debug("addr={} ON READ REQUEST read of {d} bytes succeeded", .{ client.peer.addr, read });
 
         const previous_len = client.buffer.items.len;
         try client.buffer.appendSlice(client.temp_buffer[0..read]);
@@ -801,7 +791,7 @@ pub const Server = struct {
             try processRequest(self, client);
         } else {
             // Not enough data, read more.
-            logger.debug("ctx#{} addr={} HTTP request incomplete, submitting read", .{ self.user_context, client.peer.addr });
+            logger.debug("addr={} HTTP request incomplete, submitting read", .{client.peer.addr});
             _ = try self.submitRead(client, client.fd, 0, onReadRequest);
         }
     }
@@ -810,15 +800,15 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
-                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} broken pipe", .{client.peer.addr});
                 return error.BrokenPipe;
             },
             .CONNRESET => {
-                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} connection reset by peer", .{client.peer.addr});
                 return error.ConnectionResetByPeer;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
@@ -834,7 +824,7 @@ pub const Server = struct {
             return;
         }
 
-        logger.debug("ctx#{} addr={} ON WRITE RESPONSE done", .{ self.user_context, client.peer.addr });
+        logger.debug("addr={} ON WRITE RESPONSE done", .{client.peer.addr});
 
         // Response written, read the next request
         client.request_state = .{};
@@ -843,11 +833,12 @@ pub const Server = struct {
     }
 
     fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
-        logger.debug("ctx#{} addr={} ON CLOSE RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
+        _ = self;
+        logger.debug("addr={} ON CLOSE RESPONSE FILE fd={s}", .{ client.peer.addr, client.response_state.file.fd });
         switch (cqe.err()) {
             .SUCCESS => {},
             else => |err| {
-                logger.err("ctx#{} unexpected errno={}", .{ self.user_context, err });
+                logger.err("unexpected errno={}", .{err});
                 return error.Unexpected;
             },
         }
@@ -859,15 +850,15 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
-                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} broken pipe", .{client.peer.addr});
                 return error.BrokenPipe;
             },
             .CONNRESET => {
-                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} connection reset by peer", .{client.peer.addr});
                 return error.ConnectionResetByPeer;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} ON WRITE RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} ON WRITE RESPONSE FILE unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
@@ -876,7 +867,7 @@ pub const Server = struct {
         }
 
         const written = @intCast(usize, cqe.res);
-        logger.debug("ctx#{} addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{ self.user_context, client.peer.addr, written, client.fd });
+        logger.debug("addr={} ON WRITE RESPONSE FILE write of {d} bytes to {d} succeeded", .{ client.peer.addr, written, client.fd });
 
         if (written < client.buffer.items.len) {
             // Short write, write the remaining data
@@ -907,7 +898,7 @@ pub const Server = struct {
             return;
         }
 
-        logger.debug("ctx#{} addr={} ON WRITE RESPONSE FILE done", .{ self.user_context, client.peer.addr });
+        logger.debug("addr={} ON WRITE RESPONSE FILE done", .{client.peer.addr});
 
         // Response file written, read the next request
 
@@ -929,7 +920,7 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             else => |err| {
-                logger.err("ctx#{} addr={} ON READ RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} ON READ RESPONSE FILE unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
@@ -940,8 +931,7 @@ pub const Server = struct {
         const read = @intCast(usize, cqe.res);
         client.response_state.file.offset += read;
 
-        logger.debug("ctx#{} addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
-            self.user_context,
+        logger.debug("addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
             client.peer.addr,
             read,
             client.response_state.file.fd,
@@ -961,13 +951,12 @@ pub const Server = struct {
                 return error.Canceled;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} ON STATX RESPONSE FILE unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} ON STATX RESPONSE FILE unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
 
-        logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE path=\"{s}\" fd={s}, size={s}", .{
-            self.user_context,
+        logger.debug("addr={} ON STATX RESPONSE FILE path=\"{s}\" fd={s}, size={s}", .{
             client.peer.addr,
             client.response_state.file.path,
             client.response_state.file.fd,
@@ -982,8 +971,7 @@ pub const Server = struct {
 
         // If the file has already been registered, use its registered file descriptor.
         if (self.registered_files.get(client.response_state.file.path)) |entry| {
-            logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE file descriptor already registered, path=\"{s}\" registered fd={d}", .{
-                self.user_context,
+            logger.debug("addr={} ON STATX RESPONSE FILE file descriptor already registered, path=\"{s}\" registered fd={d}", .{
                 client.peer.addr,
                 client.response_state.file.path,
                 entry.fd,
@@ -1003,8 +991,7 @@ pub const Server = struct {
         if (self.registered_fds.acquire(fd)) |registered_fd| {
             // We were able to acquire a registered file descriptor, make use of it.
 
-            logger.debug("ctx#{} addr={} ON STATX RESPONSE FILE registered file descriptor, path=\"{s}\" registered fd={d}", .{
-                self.user_context,
+            logger.debug("addr={} ON STATX RESPONSE FILE registered file descriptor, path=\"{s}\" registered fd={d}", .{
                 client.peer.addr,
                 client.response_state.file.path,
                 registered_fd,
@@ -1038,15 +1025,15 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
-                logger.err("ctx#{} addr={} broken pipe", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} broken pipe", .{client.peer.addr});
                 return error.BrokenPipe;
             },
             .CONNRESET => {
-                logger.err("ctx#{} addr={} connection reset by peer", .{ self.user_context, client.peer.addr });
+                logger.err("addr={} connection reset by peer", .{client.peer.addr});
                 return error.ConnectionResetByPeer;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
@@ -1056,7 +1043,7 @@ pub const Server = struct {
 
         const read = @intCast(usize, cqe.res);
 
-        logger.debug("ctx#{} addr={} ON READ BODY read of {d} bytes succeeded", .{ self.user_context, client.peer.addr, read });
+        logger.debug("addr={} ON READ BODY read of {d} bytes succeeded", .{ client.peer.addr, read });
 
         try client.buffer.appendSlice(client.temp_buffer[0..read]);
         client.refreshBody();
@@ -1065,7 +1052,7 @@ pub const Server = struct {
         const body = client.request_state.body.?;
 
         if (body.len < content_length) {
-            logger.debug("ctx#{} addr={} buffer len={d} bytes, content length={d} bytes", .{ self.user_context, client.peer.addr, body.len, content_length });
+            logger.debug("addr={} buffer len={d} bytes, content length={d} bytes", .{ client.peer.addr, body.len, content_length });
 
             // Not enough data, read more.
             _ = try self.submitRead(client, client.fd, 0, onReadBody);
@@ -1084,24 +1071,20 @@ pub const Server = struct {
             .NOENT => {
                 client.temp_buffer_fba.reset();
 
-                logger.warn("ctx#{} addr={} no such file or directory, path=\"{s}\"", .{
-                    self.user_context,
-                    client.peer.addr,
-                    std.fmt.fmtSliceEscapeLower(client.response_state.file.path),
-                });
+                logger.warn("addr={} no such file or directory, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(client.response_state.file.path) });
 
                 try self.submitWriteNotFound(client);
                 return;
             },
             else => |err| {
-                logger.err("ctx#{} addr={} unexpected errno={}", .{ self.user_context, client.peer.addr, err });
+                logger.err("addr={} unexpected errno={}", .{ client.peer.addr, err });
                 return error.Unexpected;
             },
         }
 
         client.response_state.file.fd = .{ .direct = @intCast(os.fd_t, cqe.res) };
 
-        logger.debug("ctx#{} addr={} ON OPEN RESPONSE FILE fd={s}", .{ self.user_context, client.peer.addr, client.response_state.file.fd });
+        logger.debug("addr={} ON OPEN RESPONSE FILE fd={s}", .{ client.peer.addr, client.response_state.file.fd });
 
         client.temp_buffer_fba.reset();
     }
@@ -1146,8 +1129,7 @@ pub const Server = struct {
                 client.response_state.file.path = try client.temp_buffer_fba.allocator().dupeZ(u8, res.path);
 
                 if (self.registered_files.get(client.response_state.file.path)) |registered_file| {
-                    logger.debug("ctx#{} addr={} FILE path=\"{s}\" is already registered, fd={d}", .{
-                        self.user_context,
+                    logger.debug("addr={} FILE path=\"{s}\" is already registered, fd={d}", .{
                         client.peer.addr,
                         client.response_state.file.path,
                         registered_file.fd,
@@ -1189,10 +1171,7 @@ pub const Server = struct {
     }
 
     fn submitWriteNotFound(self: *Self, client: *ClientState) !void {
-        logger.debug("ctx#{} addr={} returning 404 Not Found", .{
-            self.user_context,
-            client.peer.addr,
-        });
+        logger.debug("addr={} returning 404 Not Found", .{client.peer.addr});
 
         const static_response = "Not Found";
 
@@ -1207,19 +1186,13 @@ pub const Server = struct {
         // Try to find the content length. If there's one we switch to reading the body.
         const content_length = try client.request_state.parse_result.raw_request.getContentLength();
         if (content_length) |n| {
-            logger.debug("ctx#{} addr={} content length: {d}", .{ self.user_context, client.peer.addr, n });
+            logger.debug("addr={} content length: {d}", .{ client.peer.addr, n });
 
             client.request_state.content_length = n;
             client.refreshBody();
 
             if (client.request_state.body) |body| {
-                logger.debug("ctx#{} addr={} body incomplete, usable={d} bytes, content length: {d} bytes", .{
-                    self.user_context,
-                    client.peer.addr,
-                    body.len,
-                    n,
-                });
-
+                logger.debug("addr={} body incomplete, usable={d} bytes, content length: {d} bytes", .{ client.peer.addr, body.len, n });
                 _ = try self.submitRead(client, client.fd, 0, onReadBody);
                 return;
             }
@@ -1234,15 +1207,14 @@ pub const Server = struct {
     }
 
     fn submitRead(self: *Self, client: *ClientState, fd: os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} addr={} submitting read from {d}, offset {d}", .{ self.user_context, client.peer.addr, fd, offset });
+        logger.debug("addr={} submitting read from {d}, offset {d}", .{ client.peer.addr, fd, offset });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
     }
 
     fn submitWrite(self: *Self, client: *ClientState, fd: os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
-            self.user_context,
+        logger.debug("addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
             client.peer.addr,
             std.fmt.fmtIntSizeBin(client.buffer.items.len),
             fd,
@@ -1255,14 +1227,14 @@ pub const Server = struct {
     }
 
     fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} addr={} submitting open, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
+        logger.debug("addr={} submitting open, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
     }
 
     fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("ctx#{} addr={} submitting statx, path=\"{s}\"", .{ self.user_context, client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
+        logger.debug("addr={} submitting statx, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);

@@ -1,6 +1,5 @@
 const std = @import("std");
 const assert = std.debug.assert;
-
 const io_uring_cqe = std.os.linux.io_uring_cqe;
 
 /// Callback encapsulates a context and a function pointer that will be called when
