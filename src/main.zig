@@ -2,7 +2,7 @@ const std = @import("std");
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
 
-const httpserver = @import("mango_pie");
+const http = @import("mango_pie");
 
 const logger = std.log.scoped(.main);
 
@@ -47,7 +47,7 @@ const ServerContext = struct {
     const Self = @This();
 
     id: usize,
-    server: httpserver.Server,
+    server: http.Server,
     thread: std.Thread,
 
     pub fn format(self: *const Self, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -57,13 +57,13 @@ const ServerContext = struct {
         try writer.print("{d}", .{self.id});
     }
 
-    fn handleRequest(per_request_allocator: std.mem.Allocator, peer: httpserver.Peer, req: httpserver.Request) anyerror!httpserver.Response {
+    fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, req: http.Request) anyerror!http.Response {
         _ = per_request_allocator;
 
         logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
 
         if (std.mem.startsWith(u8, req.path, "/static")) {
-            return httpserver.Response{
+            return http.Response{
                 .send_file = .{
                     .status_code = .ok,
                     .headers = &.{},
@@ -71,7 +71,7 @@ const ServerContext = struct {
                 },
             };
         }
-        return httpserver.Response{
+        return http.Response{
             .response = .{
                 .status_code = .ok,
                 .headers = &.{},
@@ -99,7 +99,7 @@ pub fn main() anyerror!void {
     try addSignalHandlers();
 
     // Create the server socket
-    const server_fd = try httpserver.createSocket(listen_port);
+    const server_fd = try http.createSocket(listen_port);
 
     logger.info("listening on :{d}", .{listen_port});
     logger.info("max server threads: {d}, max ring entries: {d}, max buffer size: {d}, max connections: {d}", .{
@@ -135,7 +135,7 @@ pub fn main() anyerror!void {
         item.thread = try std.Thread.spawn(
             .{},
             struct {
-                fn worker(server: *httpserver.Server) !void {
+                fn worker(server: *http.Server) !void {
                     return server.run(1 * std.time.ns_per_s);
                 }
             }.worker,
