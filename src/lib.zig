@@ -3,6 +3,7 @@ const root = @import("root");
 const build_options = root.build_options;
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
+const http = @This();
 
 const IO_Uring = std.os.linux.IO_Uring;
 const io_uring_cqe = std.os.linux.io_uring_cqe;
@@ -14,6 +15,8 @@ const RegisteredFileDescriptors = @import("io.zig").RegisteredFileDescriptors;
 const Callback = @import("callback.zig").Callback;
 
 const logger = std.log.scoped(.main);
+
+pub usingnamespace @import("./peer.zig");
 
 /// HTTP types and stuff
 const c = @cImport({
@@ -146,11 +149,6 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
     };
 }
 
-/// Contains peer information for a request.
-pub const Peer = struct {
-    addr: std.net.Address,
-};
-
 /// Contains request data.
 /// This is what the handler will receive.
 pub const Request = struct {
@@ -187,7 +185,7 @@ pub const Response = union(enum) {
     },
 };
 
-pub const RequestHandler = *const fn (std.mem.Allocator, Peer, Request) anyerror!Response;
+pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, Request) anyerror!Response;
 
 const ResponseStateFileDescriptor = union(enum) {
     direct: std.os.fd_t,
@@ -236,7 +234,7 @@ const ClientState = struct {
     gpa: std.mem.Allocator,
 
     /// peer information associated with this client
-    peer: Peer,
+    peer: http.Peer,
     fd: std.os.socket_t,
 
     // Buffer and allocator used for small allocations (nul-terminated path, integer to int conversions etc).
