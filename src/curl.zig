@@ -57,7 +57,7 @@ pub fn do(allocator: std.mem.Allocator, method: []const u8, url: [:0]const u8, b
     var res = Response{
         .allocator = allocator,
         .response_code = 0,
-        .data = response.toOwnedSlice(),
+        .data = try response.toOwnedSlice(),
     };
 
     _ = c.curl_easy_getinfo(handle, c.CURLINFO_RESPONSE_CODE, &res.response_code);

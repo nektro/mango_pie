@@ -729,7 +729,7 @@ pub const Server = struct {
         self.root_allocator.destroy(client);
 
         // Remove client from list
-        const maybe_pos: ?usize = for (self.clients.items) |item, i| {
+        const maybe_pos: ?usize = for (self.clients.items, 0..) |item, i| {
             if (item == client) {
                 break i;
             }

@@ -139,11 +139,11 @@ pub fn Callback(comptime ClientContext: type) type {
 
 /// Checks that the argument at `idx` has the type `exp`.
 fn expectFuncArgType(comptime args: []const std.builtin.Type.StructField, comptime idx: usize, comptime exp: type) void {
-    if (args[idx].field_type != exp) {
+    if (args[idx].type != exp) {
         var msg = std.fmt.comptimePrint("expected func arg {d} to be of type {s}, got {s}", .{
             idx,
             @typeName(exp),
-            @typeName(args[idx].field_type),
+            @typeName(args[idx].type),
         });
         @compileError(msg);
     }
