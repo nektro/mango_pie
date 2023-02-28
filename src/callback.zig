@@ -17,7 +17,6 @@ pub fn Callback(comptime ClientContext: type) type {
         server: *http.Server,
         client_context: ?ClientContext = null,
         call: *const fn (*http.Server, ?ClientContext, io_uring_cqe) anyerror!void,
-
         next: ?*Self = null,
 
         /// Pool is a pool of callback objects that facilitates lifecycle management of a callback.

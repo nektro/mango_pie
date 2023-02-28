@@ -1,17 +1,13 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const net = std.net;
-const os = std.os;
-
 const IO_Uring = std.os.linux.IO_Uring;
-
 const logger = std.log.scoped(.io_helpers);
 
 // TODO(vincent): make this dynamic
 const max_connections = 128;
 
 pub const RegisteredFile = struct {
-    fd: os.fd_t,
+    fd: std.os.fd_t,
     size: u64,
 };
 
@@ -27,7 +23,7 @@ pub const RegisteredFileDescriptors = struct {
         free,
     };
 
-    fds: [max_connections]os.fd_t = [_]os.fd_t{-1} ** max_connections,
+    fds: [max_connections]std.os.fd_t = [_]std.os.fd_t{-1} ** max_connections,
     states: [max_connections]State = [_]State{.free} ** max_connections,
 
     pub fn register(self: *Self, ring: *IO_Uring) !void {
@@ -44,7 +40,7 @@ pub const RegisteredFileDescriptors = struct {
         try ring.register_files_update(0, self.fds[0..]);
     }
 
-    pub fn acquire(self: *Self, fd: os.fd_t) ?i32 {
+    pub fn acquire(self: *Self, fd: std.os.fd_t) ?i32 {
         // Find a free slot in the states array
         for (&self.states, 0..) |*state, i| {
             if (state.* == .free) {
@@ -70,20 +66,20 @@ pub const RegisteredFileDescriptors = struct {
 ///
 /// This enables SO_REUSEADDR so that we can have multiple listeners
 /// on the same port, that way the kernel load balances connections to our workers.
-pub fn createSocket(port: u16) !os.socket_t {
-    const sockfd = try os.socket(os.AF.INET6, os.SOCK.STREAM, 0);
-    errdefer os.close(sockfd);
+pub fn createSocket(port: u16) !std.os.socket_t {
+    const sockfd = try std.os.socket(std.os.AF.INET6, std.os.SOCK.STREAM, 0);
+    errdefer std.os.close(sockfd);
 
     // Enable reuseaddr if possible
-    os.setsockopt(sockfd, os.SOL.SOCKET, os.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1))) catch {};
+    std.os.setsockopt(sockfd, std.os.SOL.SOCKET, std.os.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1))) catch {};
 
     // Disable IPv6 only
-    try os.setsockopt(sockfd, os.IPPROTO.IPV6, os.linux.IPV6.V6ONLY, &std.mem.toBytes(@as(c_int, 0)));
+    try std.os.setsockopt(sockfd, std.os.IPPROTO.IPV6, std.os.linux.IPV6.V6ONLY, &std.mem.toBytes(@as(c_int, 0)));
 
-    const addr = try net.Address.parseIp6("::0", port);
+    const addr = try std.net.Address.parseIp6("::0", port);
 
-    try os.bind(sockfd, &addr.any, @sizeOf(os.sockaddr.in6));
-    try os.listen(sockfd, std.math.maxInt(u31));
+    try std.os.bind(sockfd, &addr.any, @sizeOf(std.os.sockaddr.in6));
+    try std.os.listen(sockfd, std.math.maxInt(u31));
 
     return sockfd;
 }

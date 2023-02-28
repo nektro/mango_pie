@@ -1,6 +1,4 @@
 const std = @import("std");
-const net = std.net;
-const os = std.os;
 const root = @import("root");
 const build_options = root.build_options;
 const Atomic = std.atomic.Atomic;
@@ -150,7 +148,7 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
 
 /// Contains peer information for a request.
 pub const Peer = struct {
-    addr: net.Address,
+    addr: std.net.Address,
 };
 
 /// Contains request data.
@@ -192,8 +190,8 @@ pub const Response = union(enum) {
 pub const RequestHandler = *const fn (std.mem.Allocator, Peer, Request) anyerror!Response;
 
 const ResponseStateFileDescriptor = union(enum) {
-    direct: os.fd_t,
-    registered: os.fd_t,
+    direct: std.os.fd_t,
+    registered: std.os.fd_t,
 
     pub fn format(self: ResponseStateFileDescriptor, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = options;
@@ -229,7 +227,7 @@ const ClientState = struct {
         const File = struct {
             path: [:0]u8 = undefined,
             fd: ResponseStateFileDescriptor = undefined,
-            statx_buf: os.linux.Statx = undefined,
+            statx_buf: std.os.linux.Statx = undefined,
 
             offset: usize = 0,
         };
@@ -239,7 +237,7 @@ const ClientState = struct {
 
     /// peer information associated with this client
     peer: Peer,
-    fd: os.socket_t,
+    fd: std.os.socket_t,
 
     // Buffer and allocator used for small allocations (nul-terminated path, integer to int conversions etc).
     temp_buffer: [128]u8 = undefined,
@@ -256,7 +254,7 @@ const ClientState = struct {
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
 
-    pub fn init(self: *ClientState, allocator: std.mem.Allocator, peer_addr: net.Address, client_fd: os.socket_t, max_buffer_size: usize) !void {
+    pub fn init(self: *ClientState, allocator: std.mem.Allocator, peer_addr: std.net.Address, client_fd: std.os.socket_t, max_buffer_size: usize) !void {
         self.* = .{
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
@@ -347,7 +345,7 @@ pub const Server = struct {
     listener: struct {
         /// server file descriptor used for accept(2) operation.
         /// Must have had bind(2) and listen(2) called on it before being passed to `init()`.
-        server_fd: os.socket_t,
+        server_fd: std.os.socket_t,
 
         /// indicates if an accept operation is pending.
         accept_waiting: bool = false,
@@ -359,17 +357,17 @@ pub const Server = struct {
         /// before the timeout then the timeout operation is cancelled.
         ///
         /// This is useful to run the main loop for a bounded duration.
-        timeout: os.linux.kernel_timespec = .{
+        timeout: std.os.linux.kernel_timespec = .{
             .tv_sec = 0,
             .tv_nsec = 0,
         },
 
         // Next peer we're accepting.
         // Will be valid after a successful CQE for an accept operation.
-        peer_addr: net.Address = net.Address{
+        peer_addr: std.net.Address = .{
             .any = undefined,
         },
-        peer_addr_size: u32 = @sizeOf(os.sockaddr),
+        peer_addr_size: u32 = @sizeOf(std.os.sockaddr),
     },
 
     /// CQEs storage
@@ -404,7 +402,7 @@ pub const Server = struct {
         /// owned by the caller and indicates if the server should shutdown properly.
         running: *Atomic(bool),
         /// must be a socket properly initialized with listen(2) and bind(2) which will be used for accept(2) operations.
-        server_fd: os.socket_t,
+        server_fd: std.os.socket_t,
         /// user provied request handler.
         handler: RequestHandler,
     ) !void {
@@ -500,7 +498,7 @@ pub const Server = struct {
         // Queue an accept and link it to a timeout.
 
         var sqe = try self.submitAccept();
-        sqe.flags |= os.linux.IOSQE_IO_LINK;
+        sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
         self.listener.timeout.tv_sec = 0;
         self.listener.timeout.tv_nsec = timeout;
@@ -633,7 +631,7 @@ pub const Server = struct {
         );
     }
 
-    fn submitStandaloneClose(self: *Self, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
+    fn submitStandaloneClose(self: *Self, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("submitting close of {d}", .{
             self.user_context,
             fd,
@@ -646,7 +644,7 @@ pub const Server = struct {
         );
     }
 
-    fn submitClose(self: *Self, client: *ClientState, fd: os.fd_t, comptime cb: anytype) !*io_uring_sqe {
+    fn submitClose(self: *Self, client: *ClientState, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting close of {d}", .{ client.peer.addr, fd });
 
         var tmp = try self.callbacks.get(cb, .{client});
@@ -656,7 +654,7 @@ pub const Server = struct {
         );
     }
 
-    fn onAccept(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+    fn onAccept(self: *Self, cqe: std.os.linux.io_uring_cqe) !void {
         defer self.listener.accept_waiting = false;
 
         switch (cqe.err()) {
@@ -679,7 +677,7 @@ pub const Server = struct {
 
         logger.debug("ON ACCEPT accepting connection from {}", .{self.listener.peer_addr});
 
-        const client_fd = @intCast(os.socket_t, cqe.res);
+        const client_fd = @intCast(std.os.socket_t, cqe.res);
 
         var client = try self.root_allocator.create(ClientState);
         errdefer self.root_allocator.destroy(client);
@@ -696,7 +694,7 @@ pub const Server = struct {
         _ = try self.submitRead(client, client_fd, 0, onReadRequest);
     }
 
-    fn onAcceptLinkTimeout(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+    fn onAcceptLinkTimeout(self: *Self, cqe: std.os.linux.io_uring_cqe) !void {
         _ = self;
         switch (cqe.err()) {
             .CANCELED => {
@@ -721,7 +719,7 @@ pub const Server = struct {
         }
     }
 
-    fn onCloseClient(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
+    fn onCloseClient(self: *Self, client: *ClientState, cqe: std.os.linux.io_uring_cqe) !void {
         logger.debug("addr={} ON CLOSE CLIENT fd={}", .{ client.peer.addr, client.fd });
 
         // Cleanup resources
@@ -747,7 +745,7 @@ pub const Server = struct {
         }
     }
 
-    fn onClose(self: *Self, cqe: os.linux.io_uring_cqe) !void {
+    fn onClose(self: *Self, cqe: std.os.linux.io_uring_cqe) !void {
         _ = self;
         logger.debug("ON CLOSE", .{});
 
@@ -832,7 +830,7 @@ pub const Server = struct {
         _ = try self.submitRead(client, client.fd, 0, onReadRequest);
     }
 
-    fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: os.linux.io_uring_cqe) !void {
+    fn onCloseResponseFile(self: *Self, client: *ClientState, cqe: std.os.linux.io_uring_cqe) !void {
         _ = self;
         logger.debug("addr={} ON CLOSE RESPONSE FILE fd={s}", .{ client.peer.addr, client.response_state.file.fd });
         switch (cqe.err()) {
@@ -892,7 +890,7 @@ pub const Server = struct {
                 },
                 .registered => |fd| {
                     var sqe = try self.submitRead(client, fd, offset, onReadResponseFile);
-                    sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+                    sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
                 },
             }
             return;
@@ -978,7 +976,7 @@ pub const Server = struct {
             });
 
             var sqe = try self.submitRead(client, entry.fd, 0, onReadResponseFile);
-            sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+            sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
             return;
         }
 
@@ -1010,7 +1008,7 @@ pub const Server = struct {
             }
 
             var sqe = try self.submitRead(client, registered_fd, 0, onReadResponseFile);
-            sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+            sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
             return;
         }
 
@@ -1082,7 +1080,7 @@ pub const Server = struct {
             },
         }
 
-        client.response_state.file.fd = .{ .direct = @intCast(os.fd_t, cqe.res) };
+        client.response_state.file.fd = .{ .direct = @intCast(std.os.fd_t, cqe.res) };
 
         logger.debug("addr={} ON OPEN RESPONSE FILE fd={s}", .{ client.peer.addr, client.response_state.file.fd });
 
@@ -1146,22 +1144,22 @@ pub const Server = struct {
 
                     // Now read the response file
                     var sqe = try self.submitRead(client, registered_file.fd, 0, onReadResponseFile);
-                    sqe.flags |= os.linux.IOSQE_FIXED_FILE;
+                    sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
                 } else {
                     var sqe = try self.submitOpenFile(
                         client,
                         client.response_state.file.path,
-                        os.linux.O.RDONLY | os.linux.O.NOFOLLOW,
+                        std.os.linux.O.RDONLY | std.os.linux.O.NOFOLLOW,
                         0o644,
                         onOpenResponseFile,
                     );
-                    sqe.flags |= os.linux.IOSQE_IO_LINK;
+                    sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
                     _ = try self.submitStatxFile(
                         client,
                         client.response_state.file.path,
-                        os.linux.AT.SYMLINK_NOFOLLOW,
-                        os.linux.STATX_SIZE,
+                        std.os.linux.AT.SYMLINK_NOFOLLOW,
+                        std.os.linux.STATX_SIZE,
                         &client.response_state.file.statx_buf,
                         onStatxResponseFile,
                     );
@@ -1206,14 +1204,14 @@ pub const Server = struct {
         try self.callHandler(client);
     }
 
-    fn submitRead(self: *Self, client: *ClientState, fd: os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+    fn submitRead(self: *Self, client: *ClientState, fd: std.os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting read from {d}, offset {d}", .{ client.peer.addr, fd, offset });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
     }
 
-    fn submitWrite(self: *Self, client: *ClientState, fd: os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+    fn submitWrite(self: *Self, client: *ClientState, fd: std.os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
             client.peer.addr,
             std.fmt.fmtIntSizeBin(client.buffer.items.len),
@@ -1226,17 +1224,17 @@ pub const Server = struct {
         return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
     }
 
-    fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: os.mode_t, comptime cb: anytype) !*io_uring_sqe {
+    fn submitOpenFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mode: std.os.mode_t, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting open, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
-        return try self.ring.openat(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mode);
+        return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mode);
     }
 
-    fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
+    fn submitStatxFile(self: *Self, client: *ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting statx, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
-        return self.ring.statx(@ptrToInt(tmp), os.linux.AT.FDCWD, path, flags, mask, buf);
+        return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mask, buf);
     }
 };

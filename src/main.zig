@@ -1,6 +1,4 @@
 const std = @import("std");
-const os = std.os;
-
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
 
@@ -8,26 +6,26 @@ const httpserver = @import("mango_pie");
 
 const logger = std.log.scoped(.main);
 
-var global_running: Atomic(bool) = Atomic(bool).init(true);
+var global_running = Atomic(bool).init(true);
 
 pub const build_options = @import("build_options");
 
 fn addSignalHandlers() !void {
     // Ignore broken pipes
     {
-        var act = os.Sigaction{
+        var act = std.os.Sigaction{
             .handler = .{
-                .handler = os.SIG.IGN,
+                .handler = std.os.SIG.IGN,
             },
-            .mask = os.empty_sigset,
+            .mask = std.os.empty_sigset,
             .flags = 0,
         };
-        try os.sigaction(os.SIG.PIPE, &act, null);
+        try std.os.sigaction(std.os.SIG.PIPE, &act, null);
     }
 
     // Catch SIGINT/SIGTERM for proper shutdown
     {
-        var act = os.Sigaction{
+        var act = std.os.Sigaction{
             .handler = .{
                 .handler = struct {
                     fn wrapper(sig: c_int) callconv(.C) void {
@@ -37,11 +35,11 @@ fn addSignalHandlers() !void {
                     }
                 }.wrapper,
             },
-            .mask = os.empty_sigset,
+            .mask = std.os.empty_sigset,
             .flags = 0,
         };
-        try os.sigaction(os.SIG.TERM, &act, null);
-        try os.sigaction(os.SIG.INT, &act, null);
+        try std.os.sigaction(std.os.SIG.TERM, &act, null);
+        try std.os.sigaction(std.os.SIG.INT, &act, null);
     }
 }
 
@@ -68,7 +66,7 @@ const ServerContext = struct {
             return httpserver.Response{
                 .send_file = .{
                     .status_code = .ok,
-                    .headers = &[_]httpserver.Header{},
+                    .headers = &.{},
                     .path = req.path[1..],
                 },
             };
@@ -76,7 +74,7 @@ const ServerContext = struct {
         return httpserver.Response{
             .response = .{
                 .status_code = .ok,
-                .headers = &[_]httpserver.Header{},
+                .headers = &.{},
                 .data = "Hello, World in handler!",
             },
         };
