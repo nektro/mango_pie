@@ -1,4 +1,5 @@
 const std = @import("std");
+const deps = @import("./deps.zig");
 
 pub fn build(b: *std.build.Builder) void {
     const target = b.standardTargetOptions(.{});
@@ -25,6 +26,7 @@ pub fn build(b: *std.build.Builder) void {
         .target = target,
         .optimize = optimize,
     });
+    deps.addAllTo(exe);
     exe.addIncludePath("src");
     exe.linkLibrary(picohttp);
     exe.addOptions("build_options", build_options);

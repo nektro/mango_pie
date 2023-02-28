@@ -4,11 +4,13 @@ const os = std.os;
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
 
-const httpserver = @import("lib.zig");
+const httpserver = @import("mango_pie");
 
 const logger = std.log.scoped(.main);
 
 var global_running: Atomic(bool) = Atomic(bool).init(true);
+
+pub const build_options = @import("build_options");
 
 fn addSignalHandlers() !void {
     // Ignore broken pipes

@@ -1,8 +1,8 @@
 const std = @import("std");
-const build_options = @import("build_options");
 const net = std.net;
 const os = std.os;
-
+const root = @import("root");
+const build_options = root.build_options;
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
 
