@@ -30,16 +30,12 @@ pub fn build(b: *std.build.Builder) void {
     exe.addOptions("build_options", build_options);
     exe.install();
 
-    const tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/test.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
-    tests.addIncludePath("src");
-    tests.linkSystemLibrary("curl");
-    tests.linkLibrary(picohttp);
-    tests.addOptions("build_options", build_options);
+    const run_cmd = exe.run();
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
 
-    const test_step = b.step("test", "Run library tests");
-    test_step.dependOn(&tests.step);
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
 }
