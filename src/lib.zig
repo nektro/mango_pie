@@ -903,11 +903,10 @@ pub const Server = struct {
         const read = @intCast(usize, cqe.res);
         client.response_state.file.offset += read;
 
-        logger.debug("addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded, data=\"{s}\"", .{
+        logger.debug("addr={} ON READ RESPONSE FILE read of {d} bytes from {s} succeeded", .{
             client.peer.addr,
             read,
             client.response_state.file.fd,
-            std.fmt.fmtSliceEscapeLower(client.temp_buffer[0..read]),
         });
 
         try client.buffer.appendSlice(client.temp_buffer[0..read]);
@@ -1190,12 +1189,11 @@ pub const Server = struct {
     }
 
     fn submitWrite(self: *http.Server, client: *ClientState, fd: std.os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-        logger.debug("addr={} submitting write of {s} to {d}, offset {d}, data=\"{s}\"", .{
+        logger.debug("addr={} submitting write of {s} to {d}, offset {d}", .{
             client.peer.addr,
             std.fmt.fmtIntSizeBin(client.buffer.items.len),
             fd,
             offset,
-            std.fmt.fmtSliceEscapeLower(client.buffer.items),
         });
 
         var tmp = try self.callbacks.get(cb, .{client});
