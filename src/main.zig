@@ -32,28 +32,22 @@ pub fn main() anyerror!void {
         max_connections,
     });
 
-    // Create the servers
-    var servers: [max_server_threads]ServerContext = undefined;
-    for (&servers, 0..) |*item, i| {
-        item.id = i;
-        try item.server.init(
-            allocator,
-            .{
-                .max_ring_entries = max_ring_entries,
-                .max_buffer_size = max_buffer_size,
-                .max_connections = max_connections,
-            },
-            &global_running,
-            server_fd,
-            handleRequest,
-        );
-    }
-    defer for (&servers) |*item| item.server.deinit();
+    // Create the server
+    var server: http.Server = undefined;
+    try server.init(
+        allocator,
+        .{
+            .max_ring_entries = max_ring_entries,
+            .max_buffer_size = max_buffer_size,
+            .max_connections = max_connections,
+        },
+        &global_running,
+        server_fd,
+        handleRequest,
+    );
+    defer server.deinit();
 
-    for (&servers) |*item| {
-        item.thread = try std.Thread.spawn(.{}, worker, .{&item.server});
-    }
-    for (&servers) |*item| item.thread.join();
+    try server.run(1 * std.time.ns_per_s);
 }
 
 const ServerContext = struct {
@@ -84,8 +78,4 @@ fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_
             .headers = &.{},
         },
     };
-}
-
-fn worker(server: *http.Server) !void {
-    return server.run(1 * std.time.ns_per_s);
 }
