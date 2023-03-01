@@ -28,9 +28,7 @@ pub usingnamespace @import("./client.zig");
 pub usingnamespace @import("./request.zig");
 
 /// HTTP types and stuff
-const c = @cImport({
-    @cInclude("picohttpparser.h");
-});
+const c = @import("c.zig");
 
 pub const Headers = struct {
     storage: [RawRequest.max_headers]http.Header,
