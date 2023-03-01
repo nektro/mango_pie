@@ -956,18 +956,18 @@ fn parseRequest(raw_buffer: []const u8) !?ParseRequestResult {
     const r = fbs.reader();
 
     var method_temp: [8]u8 = undefined;
-    const method = std.meta.stringToEnum(std.http.Method, r.readUntilDelimiter(&method_temp, ' ') catch return null) orelse return error.InvalidRequest;
+    const method = std.meta.stringToEnum(std.http.Method, r.readUntilDelimiter(&method_temp, ' ') catch return null) orelse return error.BadRequest;
 
     const path_start = fbs.pos;
     r.skipUntilDelimiterOrEof(' ') catch return null;
     const path = raw_buffer[path_start .. fbs.pos - 1];
     if (path.len == 0) return null;
-    if (path[0] != '/') return error.InvalidRequest;
+    if (path[0] != '/') return error.BadRequest;
 
-    const protocol = http.Protocol.fromString(extras.readBytes(r, 8) catch return null) orelse return error.InvalidRequest;
+    const protocol = http.Protocol.fromString(extras.readBytes(r, 8) catch return null) orelse return error.BadRequest;
     _ = protocol;
 
-    if (!(extras.readExpected(r, "\r\n") catch return null)) return error.InvalidRequest;
+    if (!(extras.readExpected(r, "\r\n") catch return null)) return error.BadRequest;
 
     var headers: [http.Headers.max]http.Header = undefined;
     var num_headers: usize = 0;
