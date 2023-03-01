@@ -12,7 +12,6 @@ pub fn build(b: *std.build.Builder) void {
         .optimize = optimize,
     });
     deps.addAllTo(exe);
-    exe.addIncludePath("src");
     exe.install();
 
     const run_cmd = exe.run();
