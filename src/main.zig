@@ -8,7 +8,7 @@ const signal = @import("signal");
 var global_running = Atomic(bool).init(true);
 
 pub fn main() anyerror!void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
     defer assert(!gpa.deinit());
     const allocator = gpa.allocator();
 
