@@ -25,6 +25,7 @@ pub usingnamespace @import("./header.zig");
 pub usingnamespace @import("./protocol.zig");
 pub usingnamespace @import("./server.zig");
 pub usingnamespace @import("./client.zig");
+pub usingnamespace @import("./request.zig");
 
 /// HTTP types and stuff
 const c = @cImport({
@@ -35,7 +36,7 @@ pub const Headers = struct {
     storage: [RawRequest.max_headers]http.Header,
     view: []http.Header,
 
-    fn create(req: RawRequest) !Headers {
+    pub fn create(req: RawRequest) Headers {
         assert(req.num_headers < RawRequest.max_headers);
 
         var res = Headers{
@@ -153,23 +154,3 @@ pub fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseR
         .consumed = @intCast(usize, res),
     };
 }
-
-/// Contains request data.
-/// This is what the handler will receive.
-pub const Request = struct {
-    method: std.http.Method,
-    path: []const u8,
-    headers: Headers,
-    body: ?[]const u8,
-
-    pub fn create(req: RawRequest, body: ?[]const u8) !Request {
-        return Request{
-            .method = req.method,
-            .path = req.path,
-            .headers = try Headers.create(req),
-            .body = body,
-        };
-    }
-};
-
-pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, http.ResponseWriter, Request) anyerror!http.Response;

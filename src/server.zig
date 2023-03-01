@@ -796,10 +796,13 @@ pub const Server = struct {
     fn callHandler(self: *http.Server, client: *http.Client) !void {
         // Create a request for the handler.
         // This doesn't own any data and it only lives for the duration of this function call.
-        const req = try http.Request.create(
-            client.request_state.parse_result.raw_request,
-            client.request_state.body,
-        );
+        const raw_req = client.request_state.parse_result.raw_request;
+        const req = http.Request{
+            .method = raw_req.method,
+            .path = raw_req.path,
+            .headers = http.Headers.create(raw_req),
+            .body = client.request_state.body,
+        };
 
         // Call the user provided handler to get a response.
         var data = std.ArrayListUnmanaged(u8){};
