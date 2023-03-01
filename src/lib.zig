@@ -183,7 +183,7 @@ const ResponseStateFileDescriptor = union(enum) {
     }
 };
 
-pub const ClientState = struct {
+pub const Client = struct {
     const RequestState = struct {
         parse_result: ParseRequestResult = .{
             .raw_request = undefined,
@@ -233,7 +233,7 @@ pub const ClientState = struct {
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
 
-    pub fn init(self: *ClientState, allocator: std.mem.Allocator, peer_addr: std.net.Address, client_fd: std.os.socket_t, max_buffer_size: usize) !void {
+    pub fn init(self: *Client, allocator: std.mem.Allocator, peer_addr: std.net.Address, client_fd: std.os.socket_t, max_buffer_size: usize) !void {
         self.* = .{
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
@@ -244,24 +244,24 @@ pub const ClientState = struct {
         self.buffer = try std.ArrayList(u8).initCapacity(self.gpa, max_buffer_size);
     }
 
-    pub fn deinit(self: *ClientState) void {
+    pub fn deinit(self: *Client) void {
         self.buffer.deinit();
     }
 
-    pub fn refreshBody(self: *ClientState) void {
+    pub fn refreshBody(self: *Client) void {
         const consumed = self.request_state.parse_result.consumed;
         if (consumed > 0) {
             self.request_state.body = self.buffer.items[consumed..];
         }
     }
 
-    pub fn reset(self: *ClientState) void {
+    pub fn reset(self: *Client) void {
         self.request_state = .{};
         self.response_state = .{};
         self.buffer.clearRetainingCapacity();
     }
 
-    pub fn startWritingResponse(self: *ClientState, content_length: ?usize) !void {
+    pub fn startWritingResponse(self: *Client, content_length: ?usize) !void {
         var writer = self.buffer.writer();
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });

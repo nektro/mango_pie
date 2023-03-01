@@ -31,7 +31,7 @@ pub const ServerOptions = struct {
 ///
 /// NOTE: this is _not_ thread safe ! You must create on Server object per thread.
 pub const Server = struct {
-    const CallbackType = Callback(*http.ClientState);
+    const CallbackType = Callback(*http.Client);
 
     /// allocator used to allocate each client state
     root_allocator: std.mem.Allocator,
@@ -88,7 +88,7 @@ pub const Server = struct {
 
     /// List of client states.
     /// A new state is created for each socket accepted and destroyed when the socket is closed for any reason.
-    clients: std.ArrayListUnmanaged(*http.ClientState),
+    clients: std.ArrayListUnmanaged(*http.Client),
 
     /// Free list of callback objects necessary for working with the uring.
     /// See the documentation of Callback.Pool.
@@ -129,7 +129,7 @@ pub const Server = struct {
                 .server_fd = server_fd,
             },
             .cqes = try allocator.alloc(io_uring_cqe, options.max_ring_entries),
-            .clients = try std.ArrayListUnmanaged(*http.ClientState).initCapacity(allocator, options.max_connections),
+            .clients = try std.ArrayListUnmanaged(*http.Client).initCapacity(allocator, options.max_connections),
             .callbacks = undefined,
             .registered_fds = .{},
             .registered_files = .{},
@@ -287,7 +287,7 @@ pub const Server = struct {
         return cqe_count;
     }
 
-    fn handleCallbackError(self: *http.Server, client_opt: ?*http.ClientState, err: anyerror) void {
+    fn handleCallbackError(self: *http.Server, client_opt: ?*http.Client, err: anyerror) void {
         if (err == error.Canceled) return;
 
         if (client_opt) |client| {
@@ -354,7 +354,7 @@ pub const Server = struct {
         );
     }
 
-    fn submitClose(self: *http.Server, client: *http.ClientState, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
+    fn submitClose(self: *http.Server, client: *http.Client, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting close of {d}", .{ client.peer.addr, fd });
 
         var tmp = try self.callbacks.get(cb, .{client});
@@ -389,7 +389,7 @@ pub const Server = struct {
 
         const client_fd = @intCast(std.os.socket_t, cqe.res);
 
-        var client = try self.root_allocator.create(http.ClientState);
+        var client = try self.root_allocator.create(http.Client);
         errdefer self.root_allocator.destroy(client);
 
         try client.init(
@@ -429,7 +429,7 @@ pub const Server = struct {
         }
     }
 
-    fn onCloseClient(self: *http.Server, client: *http.ClientState, cqe: std.os.linux.io_uring_cqe) !void {
+    fn onCloseClient(self: *http.Server, client: *http.Client, cqe: std.os.linux.io_uring_cqe) !void {
         logger.debug("addr={} ON CLOSE CLIENT fd={}", .{ client.peer.addr, client.fd });
 
         // Cleanup resources
@@ -468,7 +468,7 @@ pub const Server = struct {
         }
     }
 
-    fn onReadRequest(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onReadRequest(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
@@ -504,7 +504,7 @@ pub const Server = struct {
         }
     }
 
-    fn onWriteResponseBuffer(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onWriteResponseBuffer(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {},
             .PIPE => {
@@ -539,7 +539,7 @@ pub const Server = struct {
         client.buffer.clearRetainingCapacity();
     }
 
-    fn onCloseResponseFile(self: *http.Server, client: *http.ClientState, cqe: std.os.linux.io_uring_cqe) !void {
+    fn onCloseResponseFile(self: *http.Server, client: *http.Client, cqe: std.os.linux.io_uring_cqe) !void {
         _ = self;
         logger.debug("addr={} ON CLOSE RESPONSE FILE fd={s}", .{ client.peer.addr, client.response_state.file.fd });
         switch (cqe.err()) {
@@ -551,7 +551,7 @@ pub const Server = struct {
         }
     }
 
-    fn onWriteResponseFile(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onWriteResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         assert(client.buffer.items.len > 0);
 
         switch (cqe.err()) {
@@ -623,7 +623,7 @@ pub const Server = struct {
         _ = try self.submitRead(client, client.fd, 0, onReadRequest);
     }
 
-    fn onReadResponseFile(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onReadResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {},
             else => |err| {
@@ -648,7 +648,7 @@ pub const Server = struct {
         _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
     }
 
-    fn onStatxResponseFile(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onStatxResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {
                 assert(client.buffer.items.len == 0);
@@ -724,7 +724,7 @@ pub const Server = struct {
         _ = try self.submitRead(client, fd, 0, onReadResponseFile);
     }
 
-    fn onReadBody(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onReadBody(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         assert(client.request_state.content_length != null);
         assert(client.request_state.body != null);
 
@@ -769,7 +769,7 @@ pub const Server = struct {
         try self.callHandler(client);
     }
 
-    fn onOpenResponseFile(self: *http.Server, client: *http.ClientState, cqe: io_uring_cqe) !void {
+    fn onOpenResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         assert(client.buffer.items.len == 0);
 
         switch (cqe.err()) {
@@ -795,7 +795,7 @@ pub const Server = struct {
         client.temp_buffer_fba.reset();
     }
 
-    fn callHandler(self: *http.Server, client: *http.ClientState) !void {
+    fn callHandler(self: *http.Server, client: *http.Client) !void {
         // Create a request for the handler.
         // This doesn't own any data and it only lives for the duration of this function call.
         const req = try http.Request.create(
@@ -880,7 +880,7 @@ pub const Server = struct {
         }
     }
 
-    fn submitWriteNotFound(self: *http.Server, client: *http.ClientState) !void {
+    fn submitWriteNotFound(self: *http.Server, client: *http.Client) !void {
         logger.debug("addr={} returning 404 Not Found", .{client.peer.addr});
 
         const static_response = "Not Found";
@@ -892,7 +892,7 @@ pub const Server = struct {
         _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
     }
 
-    fn processRequest(self: *http.Server, client: *http.ClientState) !void {
+    fn processRequest(self: *http.Server, client: *http.Client) !void {
         // Try to find the content length. If there's one we switch to reading the body.
         const content_length = try client.request_state.parse_result.raw_request.getContentLength();
         if (content_length) |n| {
@@ -916,14 +916,14 @@ pub const Server = struct {
         try self.callHandler(client);
     }
 
-    fn submitRead(self: *http.Server, client: *http.ClientState, fd: std.os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+    fn submitRead(self: *http.Server, client: *http.Client, fd: std.os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting read from {d}, offset {d}", .{ client.peer.addr, fd, offset });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
     }
 
-    fn submitWrite(self: *http.Server, client: *http.ClientState, fd: std.os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
+    fn submitWrite(self: *http.Server, client: *http.Client, fd: std.os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting write of {s} to {d}, offset {d}", .{
             client.peer.addr,
             std.fmt.fmtIntSizeBin(client.buffer.items.len),
@@ -935,14 +935,14 @@ pub const Server = struct {
         return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
     }
 
-    fn submitOpenFile(self: *http.Server, client: *http.ClientState, path: [:0]const u8, flags: u32, mode: std.os.mode_t, comptime cb: anytype) !*io_uring_sqe {
+    fn submitOpenFile(self: *http.Server, client: *http.Client, path: [:0]const u8, flags: u32, mode: std.os.mode_t, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting open, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
         return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mode);
     }
 
-    fn submitStatxFile(self: *http.Server, client: *http.ClientState, path: [:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
+    fn submitStatxFile(self: *http.Server, client: *http.Client, path: [:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
         logger.debug("addr={} submitting statx, path=\"{s}\"", .{ client.peer.addr, std.fmt.fmtSliceEscapeLower(path) });
 
         var tmp = try self.callbacks.get(cb, .{client});
