@@ -10,44 +10,6 @@ var global_running = Atomic(bool).init(true);
 
 pub const build_options = @import("build_options");
 
-const ServerContext = struct {
-    const Self = @This();
-
-    id: usize,
-    server: http.Server,
-    thread: std.Thread,
-
-    pub fn format(self: *const Self, comptime fmt_string: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = options;
-
-        if (comptime !std.mem.eql(u8, "s", fmt_string)) @compileError("format string must be s");
-        try writer.print("{d}", .{self.id});
-    }
-
-    fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, req: http.Request) anyerror!http.Response {
-        _ = per_request_allocator;
-
-        logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
-
-        if (std.mem.startsWith(u8, req.path, "/static")) {
-            return http.Response{
-                .send_file = .{
-                    .status_code = .ok,
-                    .headers = &.{},
-                    .path = req.path[1..],
-                },
-            };
-        }
-        return http.Response{
-            .response = .{
-                .status_code = .ok,
-                .headers = &.{},
-                .data = "Hello, World in handler!",
-            },
-        };
-    }
-};
-
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer assert(!gpa.deinit());
@@ -83,7 +45,7 @@ pub fn main() anyerror!void {
             },
             &global_running,
             server_fd,
-            ServerContext.handleRequest,
+            handleRequest,
         );
     }
     defer for (&servers) |*item| item.server.deinit();
@@ -92,6 +54,35 @@ pub fn main() anyerror!void {
         item.thread = try std.Thread.spawn(.{}, worker, .{&item.server});
     }
     for (&servers) |*item| item.thread.join();
+}
+
+const ServerContext = struct {
+    id: usize,
+    server: http.Server,
+    thread: std.Thread,
+};
+
+fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, req: http.Request) anyerror!http.Response {
+    _ = per_request_allocator;
+
+    logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
+
+    if (std.mem.startsWith(u8, req.path, "/static")) {
+        return http.Response{
+            .send_file = .{
+                .status_code = .ok,
+                .headers = &.{},
+                .path = req.path[1..],
+            },
+        };
+    }
+    return http.Response{
+        .response = .{
+            .status_code = .ok,
+            .headers = &.{},
+            .data = "Hello, World in handler!",
+        },
+    };
 }
 
 fn worker(server: *http.Server) !void {
