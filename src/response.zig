@@ -6,7 +6,6 @@ pub const Response = union(enum) {
     response: struct {
         status_code: std.http.Status,
         headers: []http.Header,
-        data: []const u8,
     },
     /// The response is a static file that will be read from the filesystem.
     send_file: struct {
@@ -15,3 +14,5 @@ pub const Response = union(enum) {
         path: []const u8,
     },
 };
+
+pub const ResponseWriter = std.ArrayListUnmanaged(u8).Writer;

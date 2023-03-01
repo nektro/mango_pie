@@ -62,7 +62,7 @@ const ServerContext = struct {
     thread: std.Thread,
 };
 
-fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, req: http.Request) anyerror!http.Response {
+fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_writer: http.ResponseWriter, req: http.Request) anyerror!http.Response {
     _ = per_request_allocator;
 
     logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
@@ -76,11 +76,12 @@ fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, req:
             },
         };
     }
+
+    try res_writer.writeAll("Hello, World in handler!\n");
     return http.Response{
         .response = .{
             .status_code = .ok,
             .headers = &.{},
-            .data = "Hello, World in handler!",
         },
     };
 }

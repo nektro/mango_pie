@@ -170,7 +170,7 @@ pub const Request = struct {
     }
 };
 
-pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, Request) anyerror!http.Response;
+pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, http.ResponseWriter, Request) anyerror!http.Response;
 
 const ResponseStateFileDescriptor = union(enum) {
     direct: std.os.fd_t,
@@ -1079,9 +1079,13 @@ pub const Server = struct {
         );
 
         // Call the user provided handler to get a response.
+        var data = std.ArrayListUnmanaged(u8){};
+        errdefer data.deinit(client.gpa);
+
         const response = try self.handler(
             client.gpa,
             client.peer,
+            data.writer(client.gpa),
             req,
         );
         // TODO(vincent): cleanup in case of errors ?
@@ -1099,8 +1103,8 @@ pub const Server = struct {
                 client.response_state.status_code = res.status_code;
                 client.response_state.headers = res.headers;
 
-                try client.startWritingResponse(res.data.len);
-                try client.buffer.appendSlice(res.data);
+                try client.startWritingResponse(data.items.len);
+                try client.buffer.appendSlice(data.items);
 
                 _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
             },
