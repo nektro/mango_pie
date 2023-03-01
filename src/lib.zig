@@ -113,7 +113,7 @@ fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseReque
 
     const path_start = fbs.pos;
     try r.skipUntilDelimiterOrEof(' ');
-    const path = raw_buffer[path_start..fbs.pos];
+    const path = raw_buffer[path_start .. fbs.pos - 1];
     if (path.len == 0) return null;
     if (path[0] != '/') return null;
 
