@@ -373,7 +373,7 @@ pub const Server = struct {
 
     /// List of client states.
     /// A new state is created for each socket accepted and destroyed when the socket is closed for any reason.
-    clients: std.ArrayList(*ClientState),
+    clients: std.ArrayListUnmanaged(*ClientState),
 
     /// Free list of callback objects necessary for working with the uring.
     /// See the documentation of Callback.Pool.
@@ -383,7 +383,7 @@ pub const Server = struct {
     ///
     /// TODO(vincent): make use of this somehow ? right now it crashes the kernel.
     registered_fds: RegisteredFileDescriptors,
-    registered_files: std.StringHashMap(RegisteredFile),
+    registered_files: std.StringHashMapUnmanaged(RegisteredFile),
 
     handler: RequestHandler,
 
@@ -415,10 +415,10 @@ pub const Server = struct {
                 .server_fd = server_fd,
             },
             .cqes = try allocator.alloc(io_uring_cqe, options.max_ring_entries),
-            .clients = try std.ArrayList(*ClientState).initCapacity(allocator, options.max_connections),
+            .clients = try std.ArrayListUnmanaged(*ClientState).initCapacity(allocator, options.max_connections),
             .callbacks = undefined,
             .registered_fds = .{},
-            .registered_files = std.StringHashMap(RegisteredFile).init(allocator),
+            .registered_files = .{},
             .handler = handler,
         };
 
@@ -432,13 +432,13 @@ pub const Server = struct {
         while (registered_files_iterator.next()) |entry| {
             self.root_allocator.free(entry.key_ptr.*);
         }
-        self.registered_files.deinit();
+        self.registered_files.deinit(self.root_allocator);
 
         for (self.clients.items) |client| {
             client.deinit();
             self.root_allocator.destroy(client);
         }
-        self.clients.deinit();
+        self.clients.deinit(self.root_allocator);
 
         self.callbacks.deinit();
         self.root_allocator.free(self.cqes);
@@ -688,7 +688,7 @@ pub const Server = struct {
         );
         errdefer client.deinit();
 
-        try self.clients.append(client);
+        try self.clients.append(self.root_allocator, client);
         _ = try self.submitRead(client, client_fd, 0, onReadRequest);
     }
 
@@ -996,7 +996,7 @@ pub const Server = struct {
 
             try self.registered_fds.update(&self.ring);
 
-            var entry = try self.registered_files.getOrPut(client.response_state.file.path);
+            var entry = try self.registered_files.getOrPut(self.root_allocator, client.response_state.file.path);
             if (!entry.found_existing) {
                 entry.key_ptr.* = try self.root_allocator.dupeZ(u8, client.response_state.file.path);
                 entry.value_ptr.* = RegisteredFile{
