@@ -83,6 +83,8 @@ pub const Client = struct {
         var writer = self.buffer.writer();
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
+        try writer.writeAll("Connection: close\n");
+
         for (self.response_state.headers) |header| {
             try writer.print("{s}: {s}\n", .{ header.name, header.value });
         }
