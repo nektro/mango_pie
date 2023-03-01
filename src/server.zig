@@ -972,8 +972,20 @@ fn parseRequest(raw_buffer: []const u8) !?ParseRequestResult {
     var headers: [http.Headers.max]http.Header = undefined;
     var num_headers: usize = 0;
 
-    {
-        // TODO parse headers
+    while (true) {
+        var hdr_temp: [1024]u8 = undefined;
+        const hdr_opt = r.readUntilDelimiterOrEof(&hdr_temp, '\r') catch return error.BadRequest1;
+        if ((r.readByte() catch return null) != '\n') return error.BadRequest2;
+        const hdr = std.mem.trimRight(u8, hdr_opt orelse return null, "\r");
+        if (hdr.len == 0) break;
+        if (std.mem.indexOfScalar(u8, hdr, ':') == null) return error.BadRequest3;
+        var iter = std.mem.split(u8, hdr, ": ");
+        headers[num_headers] = .{
+            .name = iter.first(),
+            .value = iter.rest(),
+        };
+        num_headers += 1;
+        if (num_headers == http.Headers.max) break;
     }
 
     return ParseRequestResult{
