@@ -50,12 +50,6 @@ pub fn main() anyerror!void {
     try server.run(1 * std.time.ns_per_s);
 }
 
-const ServerContext = struct {
-    id: usize,
-    server: http.Server,
-    thread: std.Thread,
-};
-
 fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_writer: http.ResponseWriter, req: http.Request) anyerror!http.Response {
     _ = per_request_allocator;
 
