@@ -84,7 +84,7 @@ pub const Server = struct {
     },
 
     /// CQEs storage
-    cqes: []io_uring_cqe = undefined,
+    cqes: [512]io_uring_cqe = undefined,
 
     /// List of client states.
     /// A new state is created for each socket accepted and destroyed when the socket is closed for any reason.
@@ -128,7 +128,6 @@ pub const Server = struct {
             .listener = .{
                 .server_fd = server_fd,
             },
-            .cqes = try allocator.alloc(io_uring_cqe, options.max_ring_entries),
             .clients = try std.ArrayListUnmanaged(*http.Client).initCapacity(allocator, options.max_connections),
             .callbacks = undefined,
             .registered_fds = .{},
@@ -153,7 +152,6 @@ pub const Server = struct {
         self.clients.deinit(self.root_allocator);
 
         self.callbacks.deinit();
-        self.root_allocator.free(self.cqes);
         self.ring.deinit();
     }
 
@@ -264,7 +262,7 @@ pub const Server = struct {
     /// Returnsd the number of events processed.
     fn processCompletions(self: *http.Server, nr: usize) !usize {
         // TODO(vincent): how should we handle EAGAIN and EINTR ? right now they will shutdown the server.
-        const cqe_count = try self.ring.copy_cqes(self.cqes, @intCast(u32, nr));
+        const cqe_count = try self.ring.copy_cqes(self.cqes[0..], @intCast(u32, nr));
 
         for (self.cqes[0..cqe_count]) |cqe| {
             assert(cqe.user_data != 0);
