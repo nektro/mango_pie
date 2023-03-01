@@ -62,7 +62,6 @@ const RawRequest = struct {
     method_len: usize = undefined,
     path: [*c]u8 = undefined,
     path_len: usize = undefined,
-    minor_version: c_int = 0,
     headers: [max_headers]c.phr_header = undefined,
     num_headers: usize = max_headers,
 
@@ -72,10 +71,6 @@ const RawRequest = struct {
 
     fn getPath(self: Self) []const u8 {
         return self.path[0..self.path_len];
-    }
-
-    fn getMinorVersion(self: Self) usize {
-        return @intCast(usize, self.minor_version);
     }
 
     fn copyHeaders(self: Self, headers: []http.Header) usize {
@@ -119,6 +114,7 @@ const ParseRequestResult = struct {
 
 fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestResult {
     var req = RawRequest{};
+    var minor_version: c_int = 0;
 
     const res = c.phr_parse_request(
         buffer.ptr,
@@ -127,7 +123,7 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
         &req.method_len,
         &req.path,
         &req.path_len,
-        &req.minor_version,
+        &minor_version,
         &req.headers,
         &req.num_headers,
         previous_buffer_len,
@@ -151,7 +147,6 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
 pub const Request = struct {
     method: std.http.Method,
     path: []const u8,
-    minor_version: usize,
     headers: Headers,
     body: ?[]const u8,
 
@@ -159,7 +154,6 @@ pub const Request = struct {
         return Request{
             .method = std.meta.stringToEnum(std.http.Method, req.getMethod()).?,
             .path = req.getPath(),
-            .minor_version = req.getMinorVersion(),
             .headers = try Headers.create(req),
             .body = body,
         };

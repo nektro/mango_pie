@@ -65,7 +65,7 @@ const ServerContext = struct {
 fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_writer: http.ResponseWriter, req: http.Request) anyerror!http.Response {
     _ = per_request_allocator;
 
-    logger.debug("IN HANDLER addr={} method: {s}, path: {s}, minor version: {d}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.minor_version, req.body });
+    logger.debug("IN HANDLER addr={} method: {s}, path: {s}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.body });
 
     if (std.mem.startsWith(u8, req.path, "/static")) {
         return http.Response{
