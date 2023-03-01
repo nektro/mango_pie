@@ -71,9 +71,8 @@ pub fn main() anyerror!void {
     });
 
     // Create the servers
-
-    var servers = try allocator.alloc(ServerContext, max_server_threads);
-    for (servers, 0..) |*item, i| {
+    var servers: [max_server_threads]ServerContext = undefined;
+    for (&servers, 0..) |*item, i| {
         item.id = i;
         try item.server.init(
             allocator,
@@ -87,16 +86,12 @@ pub fn main() anyerror!void {
             ServerContext.handleRequest,
         );
     }
-    defer {
-        for (servers) |*item| item.server.deinit();
-        allocator.free(servers);
-    }
+    defer for (&servers) |*item| item.server.deinit();
 
-    for (servers) |*item| {
+    for (&servers) |*item| {
         item.thread = try std.Thread.spawn(.{}, worker, .{&item.server});
     }
-
-    for (servers) |*item| item.thread.join();
+    for (&servers) |*item| item.thread.join();
 }
 
 fn worker(server: *http.Server) !void {
