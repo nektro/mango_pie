@@ -132,16 +132,12 @@ pub fn main() anyerror!void {
     }
 
     for (servers) |*item| {
-        item.thread = try std.Thread.spawn(
-            .{},
-            struct {
-                fn worker(server: *http.Server) !void {
-                    return server.run(1 * std.time.ns_per_s);
-                }
-            }.worker,
-            .{&item.server},
-        );
+        item.thread = try std.Thread.spawn(.{}, worker, .{&item.server});
     }
 
     for (servers) |*item| item.thread.join();
+}
+
+fn worker(server: *http.Server) !void {
+    return server.run(1 * std.time.ns_per_s);
 }
