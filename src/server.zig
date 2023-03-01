@@ -676,13 +676,16 @@ pub const Server = struct {
         req.body = client.request_state.body;
 
         // Call the user provided handler to get a response.
+        var arena = std.heap.ArenaAllocator.init(client.gpa);
+        defer arena.deinit();
+
         var data = std.ArrayListUnmanaged(u8){};
-        errdefer data.deinit(client.gpa);
+        errdefer data.deinit(arena.allocator());
 
         const response = try self.handler(
-            client.gpa,
+            arena.allocator(),
             client.peer,
-            data.writer(client.gpa),
+            data.writer(arena.allocator()),
             req,
         );
         // TODO(vincent): cleanup in case of errors ?
