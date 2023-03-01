@@ -4,7 +4,7 @@ const IO_Uring = std.os.linux.IO_Uring;
 const logger = std.log.scoped(.io_helpers);
 
 // TODO(vincent): make this dynamic
-const max_connections = 128;
+const max_connections = 32;
 
 pub const RegisteredFile = struct {
     fd: std.os.fd_t,
