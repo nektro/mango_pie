@@ -3,6 +3,7 @@ const root = @import("root");
 const build_options = root.build_options;
 const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
+const extras = @import("extras");
 const http = @This();
 
 const IO_Uring = std.os.linux.IO_Uring;
@@ -19,6 +20,7 @@ const logger = std.log.scoped(.main);
 pub usingnamespace @import("./peer.zig");
 pub usingnamespace @import("./response.zig");
 pub usingnamespace @import("./header.zig");
+pub usingnamespace @import("./protocol.zig");
 
 /// HTTP types and stuff
 const c = @cImport({
@@ -58,7 +60,7 @@ const RawRequest = struct {
 
     const max_headers = 100;
 
-    method: []const u8 = undefined,
+    method: std.http.Method = undefined,
     path: []const u8 = undefined,
     headers: [max_headers]c.phr_header = undefined,
     num_headers: usize = max_headers,
@@ -102,22 +104,30 @@ const ParseRequestResult = struct {
     consumed: usize,
 };
 
-fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestResult {
+fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseRequestResult {
     var req = RawRequest{};
-    var minor_version: c_int = 0;
-    var method: [*c]const u8 = undefined;
-    var method_len: usize = undefined;
-    var path: [*c]const u8 = undefined;
-    var path_len: usize = undefined;
 
-    const res = c.phr_parse_request(
+    var fbs = std.io.fixedBufferStream(raw_buffer);
+    const r = fbs.reader();
+
+    var method_temp: [8]u8 = undefined;
+    const method = std.meta.stringToEnum(std.http.Method, try r.readUntilDelimiter(&method_temp, ' ')) orelse return null;
+
+    const path_start = fbs.pos;
+    try r.skipUntilDelimiterOrEof(' ');
+    const path = raw_buffer[path_start..fbs.pos];
+    if (path.len == 0) return null;
+    if (path[0] != '/') return null;
+
+    const protocol = http.Protocol.fromString(try extras.readBytes(r, 8)) orelse return null;
+    _ = protocol;
+
+    if (!try extras.readExpected(r, "\r\n")) return null;
+
+    const buffer = fbs.buffer[fbs.pos..];
+    const res = c.phr_parse_headers(
         buffer.ptr,
         buffer.len,
-        &method,
-        &method_len,
-        &path,
-        &path_len,
-        &minor_version,
         &req.headers,
         &req.num_headers,
         previous_buffer_len,
@@ -129,8 +139,8 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
     if (res == -2) {
         return null;
     }
-    req.method = method[0..method_len];
-    req.path = path[0..path_len];
+    req.method = method;
+    req.path = path;
 
     return ParseRequestResult{
         .raw_request = req,
@@ -148,7 +158,7 @@ pub const Request = struct {
 
     fn create(req: RawRequest, body: ?[]const u8) !Request {
         return Request{
-            .method = std.meta.stringToEnum(std.http.Method, req.method).?,
+            .method = req.method,
             .path = req.path,
             .headers = try Headers.create(req),
             .body = body,

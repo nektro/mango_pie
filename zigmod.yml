@@ -4,3 +4,4 @@ main: src/lib.zig
 license: MIT
 description: Experimental io_uring HTTP server in Zig
 dependencies:
+  - src: git https://github.com/nektro/zig-extras
