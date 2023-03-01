@@ -56,52 +56,8 @@ pub const Headers = struct {
     }
 };
 
-/// Request type contains fields populated by picohttpparser and provides
-/// helpers methods for easier use with Zig.
-const RawRequest = struct {
-    const max_headers = 100;
-
-    method: std.http.Method,
-    path: []const u8,
-    headers: [max_headers]c.phr_header,
-    num_headers: usize,
-
-    fn copyHeaders(self: RawRequest, headers: []http.Header) usize {
-        assert(headers.len >= self.num_headers);
-
-        var i: usize = 0;
-        while (i < self.num_headers) : (i += 1) {
-            const hdr = self.headers[i];
-
-            const name = hdr.name[0..hdr.name_len];
-            const value = hdr.value[0..hdr.value_len];
-
-            headers[i].name = name;
-            headers[i].value = value;
-        }
-
-        return self.num_headers;
-    }
-
-    pub fn getContentLength(self: RawRequest) !?usize {
-        var i: usize = 0;
-        while (i < self.num_headers) : (i += 1) {
-            const hdr = self.headers[i];
-
-            const name = hdr.name[0..hdr.name_len];
-            const value = hdr.value[0..hdr.value_len];
-
-            if (!std.ascii.eqlIgnoreCase(name, "Content-Length")) {
-                continue;
-            }
-            return try std.fmt.parseInt(usize, value, 10);
-        }
-        return null;
-    }
-};
-
 pub const ParseRequestResult = struct {
-    raw_request: RawRequest,
+    raw_request: http.RawRequest,
     consumed: usize,
 };
 
@@ -123,7 +79,7 @@ pub fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseR
 
     if (!(extras.readExpected(r, "\r\n") catch return null)) return error.InvalidRequest;
 
-    var headers: [RawRequest.max_headers]c.phr_header = undefined;
+    var headers: [http.RawRequest.max_headers]c.phr_header = undefined;
     var num_headers: usize = undefined;
 
     const buffer = fbs.buffer[fbs.pos..];
