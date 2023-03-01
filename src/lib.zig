@@ -18,20 +18,16 @@ const logger = std.log.scoped(.main);
 
 pub usingnamespace @import("./peer.zig");
 pub usingnamespace @import("./response.zig");
+pub usingnamespace @import("./header.zig");
 
 /// HTTP types and stuff
 const c = @cImport({
     @cInclude("picohttpparser.h");
 });
 
-pub const Header = struct {
-    name: []const u8,
-    value: []const u8,
-};
-
 pub const Headers = struct {
-    storage: [RawRequest.max_headers]Header,
-    view: []Header,
+    storage: [RawRequest.max_headers]http.Header,
+    view: []http.Header,
 
     fn create(req: RawRequest) !Headers {
         assert(req.num_headers < RawRequest.max_headers);
@@ -45,7 +41,7 @@ pub const Headers = struct {
         return res;
     }
 
-    pub fn get(self: Headers, name: []const u8) ?Header {
+    pub fn get(self: Headers, name: []const u8) ?http.Header {
         for (self.view) |item| {
             if (std.ascii.eqlIgnoreCase(name, item.name)) {
                 return item;
@@ -82,7 +78,7 @@ const RawRequest = struct {
         return @intCast(usize, self.minor_version);
     }
 
-    fn copyHeaders(self: Self, headers: []Header) usize {
+    fn copyHeaders(self: Self, headers: []http.Header) usize {
         assert(headers.len >= self.num_headers);
 
         var i: usize = 0;
@@ -202,7 +198,7 @@ const ClientState = struct {
     const ResponseState = struct {
         /// status code and header are overwritable in the handler
         status_code: std.http.Status = .ok,
-        headers: []Header = &[_]Header{},
+        headers: []http.Header = &[_]http.Header{},
 
         /// state used when we need to send a static file from the filesystem.
         file: File = .{},
@@ -268,10 +264,7 @@ const ClientState = struct {
     fn startWritingResponse(self: *ClientState, content_length: ?usize) !void {
         var writer = self.buffer.writer();
 
-        try writer.print("HTTP/1.1 {d} {s}\n", .{
-            @enumToInt(self.response_state.status_code),
-            self.response_state.status_code.phrase().?,
-        });
+        try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
         for (self.response_state.headers) |header| {
             try writer.print("{s}: {s}\n", .{ header.name, header.value });
         }
