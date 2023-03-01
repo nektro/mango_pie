@@ -30,32 +30,6 @@ pub usingnamespace @import("./request.zig");
 /// HTTP types and stuff
 const c = @import("c.zig");
 
-pub const Headers = struct {
-    storage: [RawRequest.max_headers]http.Header,
-    view: []http.Header,
-
-    pub fn create(req: RawRequest) Headers {
-        assert(req.num_headers < RawRequest.max_headers);
-
-        var res = Headers{
-            .storage = undefined,
-            .view = undefined,
-        };
-        const num_headers = req.copyHeaders(&res.storage);
-        res.view = res.storage[0..num_headers];
-        return res;
-    }
-
-    pub fn get(self: Headers, name: []const u8) ?http.Header {
-        for (self.view) |item| {
-            if (std.ascii.eqlIgnoreCase(name, item.name)) {
-                return item;
-            }
-        }
-        return null;
-    }
-};
-
 pub const ParseRequestResult = struct {
     raw_request: http.RawRequest,
     consumed: usize,
