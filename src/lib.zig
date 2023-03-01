@@ -17,6 +17,7 @@ const Callback = @import("callback.zig").Callback;
 const logger = std.log.scoped(.main);
 
 pub usingnamespace @import("./peer.zig");
+pub usingnamespace @import("./response.zig");
 
 /// HTTP types and stuff
 const c = @cImport({
@@ -169,23 +170,7 @@ pub const Request = struct {
     }
 };
 
-/// The response returned by the handler.
-pub const Response = union(enum) {
-    /// The response is a simple buffer.
-    response: struct {
-        status_code: std.http.Status,
-        headers: []Header,
-        data: []const u8,
-    },
-    /// The response is a static file that will be read from the filesystem.
-    send_file: struct {
-        status_code: std.http.Status,
-        headers: []Header,
-        path: []const u8,
-    },
-};
-
-pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, Request) anyerror!Response;
+pub const RequestHandler = *const fn (std.mem.Allocator, http.Peer, Request) anyerror!http.Response;
 
 const ResponseStateFileDescriptor = union(enum) {
     direct: std.os.fd_t,
