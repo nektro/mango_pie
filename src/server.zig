@@ -10,6 +10,8 @@ const http = @import("./lib.zig");
 const Callback = @import("callback.zig").Callback;
 const RegisteredFile = @import("io.zig").RegisteredFile;
 const RegisteredFileDescriptors = @import("io.zig").RegisteredFileDescriptors;
+const extras = @import("extras");
+const c = @import("c.zig");
 
 const logger = std.log.scoped(.main);
 
@@ -492,7 +494,7 @@ pub const Server = struct {
         const previous_len = client.buffer.items.len;
         try client.buffer.appendSlice(client.temp_buffer[0..read]);
 
-        if (try http.parseRequest(previous_len, client.buffer.items)) |result| {
+        if (try parseRequest(previous_len, client.buffer.items)) |result| {
             client.request_state.parse_result = result;
             try processRequest(self, client);
         } else {
@@ -950,3 +952,56 @@ pub const Server = struct {
         return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mask, buf);
     }
 };
+
+pub const ParseRequestResult = struct {
+    raw_request: http.RawRequest,
+    consumed: usize,
+};
+
+fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseRequestResult {
+    var fbs = std.io.fixedBufferStream(raw_buffer);
+    const r = fbs.reader();
+
+    var method_temp: [8]u8 = undefined;
+    const method = std.meta.stringToEnum(std.http.Method, r.readUntilDelimiter(&method_temp, ' ') catch return null) orelse return error.InvalidRequest;
+
+    const path_start = fbs.pos;
+    r.skipUntilDelimiterOrEof(' ') catch return null;
+    const path = raw_buffer[path_start .. fbs.pos - 1];
+    if (path.len == 0) return null;
+    if (path[0] != '/') return error.InvalidRequest;
+
+    const protocol = http.Protocol.fromString(extras.readBytes(r, 8) catch return null) orelse return error.InvalidRequest;
+    _ = protocol;
+
+    if (!(extras.readExpected(r, "\r\n") catch return null)) return error.InvalidRequest;
+
+    var headers: [http.RawRequest.max_headers]c.phr_header = undefined;
+    var num_headers: usize = undefined;
+
+    const buffer = fbs.buffer[fbs.pos..];
+    const res = c.phr_parse_headers(
+        buffer.ptr,
+        buffer.len,
+        &headers,
+        &num_headers,
+        previous_buffer_len,
+    );
+    if (res == -1) {
+        // TODO(vincent): don't panic, proper cleanup instead
+        std.debug.panic("parse error\n", .{});
+    }
+    if (res == -2) {
+        return null;
+    }
+
+    return ParseRequestResult{
+        .raw_request = .{
+            .method = method,
+            .path = path,
+            .headers = headers,
+            .num_headers = num_headers,
+        },
+        .consumed = @intCast(usize, res),
+    };
+}
