@@ -10,39 +10,6 @@ var global_running = Atomic(bool).init(true);
 
 pub const build_options = @import("build_options");
 
-fn addSignalHandlers() !void {
-    // Ignore broken pipes
-    {
-        var act = std.os.Sigaction{
-            .handler = .{
-                .handler = std.os.SIG.IGN,
-            },
-            .mask = std.os.empty_sigset,
-            .flags = 0,
-        };
-        try std.os.sigaction(std.os.SIG.PIPE, &act, null);
-    }
-
-    // Catch SIGINT/SIGTERM for proper shutdown
-    {
-        var act = std.os.Sigaction{
-            .handler = .{
-                .handler = struct {
-                    fn wrapper(sig: c_int) callconv(.C) void {
-                        logger.info("caught signal {d}", .{sig});
-
-                        global_running.store(false, .SeqCst);
-                    }
-                }.wrapper,
-            },
-            .mask = std.os.empty_sigset,
-            .flags = 0,
-        };
-        try std.os.sigaction(std.os.SIG.TERM, &act, null);
-        try std.os.sigaction(std.os.SIG.INT, &act, null);
-    }
-}
-
 const ServerContext = struct {
     const Self = @This();
 
@@ -84,19 +51,13 @@ const ServerContext = struct {
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer assert(!gpa.deinit());
-    var allocator = gpa.allocator();
+    const allocator = gpa.allocator();
 
     const listen_port: u16 = 3405;
     const max_server_threads: usize = 1;
     const max_ring_entries: u13 = 512;
     const max_buffer_size: usize = 4096;
     const max_connections: usize = 128;
-
-    // NOTE(vincent): for debugging
-    // var logging_allocator = std.heap.loggingAllocator(gpa.allocator());
-    // var allocator = logging_allocator.allocator();
-
-    try addSignalHandlers();
 
     // Create the server socket
     const server_fd = try http.createSocket(listen_port);
