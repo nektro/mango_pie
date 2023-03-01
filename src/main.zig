@@ -3,6 +3,7 @@ const Atomic = std.atomic.Atomic;
 const assert = std.debug.assert;
 
 const http = @import("mango_pie");
+const signal = @import("signal");
 
 var global_running = Atomic(bool).init(true);
 
@@ -23,6 +24,9 @@ pub fn main() anyerror!void {
     std.log.info("listening on :{d}", .{listen_port});
     std.log.info("max server threads: {d}, max ring entries: {d}, max buffer size: {d}, max connections: {d}", .{ max_server_threads, max_ring_entries, max_buffer_size, max_connections });
 
+    signal.listenFor(std.os.linux.SIG.INT, handle_sig);
+    signal.listenFor(std.os.linux.SIG.TERM, handle_sig);
+
     // Create the server
     var server: http.Server = undefined;
     try server.init(
@@ -39,6 +43,11 @@ pub fn main() anyerror!void {
     defer server.deinit();
 
     try server.run(1 * std.time.ns_per_s);
+}
+
+fn handle_sig() void {
+    std.log.info("exiting safely...", .{});
+    global_running.store(false, .SeqCst);
 }
 
 fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_writer: http.ResponseWriter, req: http.Request) anyerror!http.Response {
