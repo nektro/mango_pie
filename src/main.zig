@@ -4,11 +4,7 @@ const assert = std.debug.assert;
 
 const http = @import("mango_pie");
 
-const logger = std.log.scoped(.main);
-
 var global_running = Atomic(bool).init(true);
-
-pub const build_options = @import("build_options");
 
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -24,13 +20,8 @@ pub fn main() anyerror!void {
     // Create the server socket
     const server_fd = try http.createSocket(listen_port);
 
-    logger.info("listening on :{d}", .{listen_port});
-    logger.info("max server threads: {d}, max ring entries: {d}, max buffer size: {d}, max connections: {d}", .{
-        max_server_threads,
-        max_ring_entries,
-        max_buffer_size,
-        max_connections,
-    });
+    std.log.info("listening on :{d}", .{listen_port});
+    std.log.info("max server threads: {d}, max ring entries: {d}, max buffer size: {d}, max connections: {d}", .{ max_server_threads, max_ring_entries, max_buffer_size, max_connections });
 
     // Create the server
     var server: http.Server = undefined;
@@ -53,7 +44,7 @@ pub fn main() anyerror!void {
 fn handleRequest(per_request_allocator: std.mem.Allocator, peer: http.Peer, res_writer: http.ResponseWriter, req: http.Request) anyerror!http.Response {
     _ = per_request_allocator;
 
-    logger.debug("IN HANDLER addr={} method: {s}, path: {s}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.body });
+    std.log.debug("IN HANDLER addr={} method: {s}, path: {s}, body: \"{?s}\"", .{ peer.addr, @tagName(req.method), req.path, req.body });
 
     if (std.mem.startsWith(u8, req.path, "/static")) {
         return http.Response{

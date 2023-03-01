@@ -1,7 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const IO_Uring = std.os.linux.IO_Uring;
-const logger = std.log.scoped(.io_helpers);
 
 // TODO(vincent): make this dynamic
 const max_connections = 32;
@@ -27,16 +26,10 @@ pub const RegisteredFileDescriptors = struct {
     states: [max_connections]State = [_]State{.free} ** max_connections,
 
     pub fn register(self: *Self, ring: *IO_Uring) !void {
-        logger.debug("REGISTERED FILE DESCRIPTORS, fds={d}", .{
-            self.fds,
-        });
         try ring.register_files(self.fds[0..]);
     }
 
     pub fn update(self: *Self, ring: *IO_Uring) !void {
-        logger.debug("UPDATE FILE DESCRIPTORS, fds={d}", .{
-            self.fds,
-        });
         try ring.register_files_update(0, self.fds[0..]);
     }
 
