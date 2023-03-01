@@ -221,7 +221,7 @@ const ClientState = struct {
     fd: std.os.socket_t,
 
     // Buffer and allocator used for small allocations (nul-terminated path, integer to int conversions etc).
-    temp_buffer: [128]u8 = undefined,
+    temp_buffer: [std.mem.page_size]u8 = undefined,
     temp_buffer_fba: std.heap.FixedBufferAllocator = undefined,
 
     // TODO(vincent): prevent going over the max_buffer_size somehow ("limiting" allocator ?)
