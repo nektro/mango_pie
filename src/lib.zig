@@ -58,20 +58,10 @@ const RawRequest = struct {
 
     const max_headers = 100;
 
-    method: [*c]u8 = undefined,
-    method_len: usize = undefined,
-    path: [*c]u8 = undefined,
-    path_len: usize = undefined,
+    method: []const u8 = undefined,
+    path: []const u8 = undefined,
     headers: [max_headers]c.phr_header = undefined,
     num_headers: usize = max_headers,
-
-    fn getMethod(self: Self) []const u8 {
-        return self.method[0..self.method_len];
-    }
-
-    fn getPath(self: Self) []const u8 {
-        return self.path[0..self.path_len];
-    }
 
     fn copyHeaders(self: Self, headers: []http.Header) usize {
         assert(headers.len >= self.num_headers);
@@ -115,14 +105,18 @@ const ParseRequestResult = struct {
 fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestResult {
     var req = RawRequest{};
     var minor_version: c_int = 0;
+    var method: [*c]const u8 = undefined;
+    var method_len: usize = undefined;
+    var path: [*c]const u8 = undefined;
+    var path_len: usize = undefined;
 
     const res = c.phr_parse_request(
         buffer.ptr,
         buffer.len,
-        &req.method,
-        &req.method_len,
-        &req.path,
-        &req.path_len,
+        &method,
+        &method_len,
+        &path,
+        &path_len,
         &minor_version,
         &req.headers,
         &req.num_headers,
@@ -135,6 +129,8 @@ fn parseRequest(previous_buffer_len: usize, buffer: []const u8) !?ParseRequestRe
     if (res == -2) {
         return null;
     }
+    req.method = method[0..method_len];
+    req.path = path[0..path_len];
 
     return ParseRequestResult{
         .raw_request = req,
@@ -152,8 +148,8 @@ pub const Request = struct {
 
     fn create(req: RawRequest, body: ?[]const u8) !Request {
         return Request{
-            .method = std.meta.stringToEnum(std.http.Method, req.getMethod()).?,
-            .path = req.getPath(),
+            .method = std.meta.stringToEnum(std.http.Method, req.method).?,
+            .path = req.path,
             .headers = try Headers.create(req),
             .body = body,
         };
