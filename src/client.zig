@@ -4,7 +4,7 @@ const http = @import("./lib.zig");
 pub const Client = struct {
     const RequestState = struct {
         parse_result: http.ParseRequestResult = .{
-            .raw_request = undefined,
+            .request = undefined,
             .consumed = 0,
         },
         content_length: ?usize = null,

@@ -7,25 +7,29 @@ pub const Header = struct {
 };
 
 pub const Headers = struct {
-    storage: [http.RawRequest.max_headers]http.Header,
-    view: []http.Header,
+    storage: [max]http.Header,
+    view: []const http.Header,
 
-    pub fn create(req: http.RawRequest) Headers {
-        var res = Headers{
-            .storage = undefined,
-            .view = undefined,
+    pub const max = 128;
+
+    pub fn create(storage: [max]http.Header, len: usize) Headers {
+        return .{
+            .storage = storage,
+            .view = storage[0..len],
         };
-        const num_headers = req.copyHeaders(&res.storage);
-        res.view = res.storage[0..num_headers];
-        return res;
     }
 
-    pub fn get(self: Headers, name: []const u8) ?http.Header {
+    pub fn get(self: Headers, name: []const u8) ?[]const u8 {
         for (self.view) |item| {
             if (std.ascii.eqlIgnoreCase(name, item.name)) {
-                return item;
+                return item.value;
             }
         }
         return null;
+    }
+
+    pub fn get_int(self: Headers, name: []const u8, comptime T: type, radix: u8) ?T {
+        const hdr = self.get(name) orelse return null;
+        return std.fmt.parseInt(T, hdr, radix) catch return null;
     }
 };

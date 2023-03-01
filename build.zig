@@ -8,14 +8,6 @@ pub fn build(b: *std.build.Builder) void {
     const debug_callback_internals = b.option(bool, "debug-callback-internals", "Enable callback debugging") orelse false;
     const debug_accepts = b.option(bool, "debug-accepts", "Enable debugging for accepts") orelse false;
 
-    const picohttp = b.addStaticLibrary(.{
-        .name = "picohttp",
-        .target = target,
-        .optimize = optimize,
-    });
-    picohttp.addCSourceFile("src/picohttpparser.c", &.{});
-    picohttp.linkLibC();
-
     const build_options = b.addOptions();
     build_options.addOption(bool, "debug_callback_internals", debug_callback_internals);
     build_options.addOption(bool, "debug_accepts", debug_accepts);
@@ -28,7 +20,6 @@ pub fn build(b: *std.build.Builder) void {
     });
     deps.addAllTo(exe);
     exe.addIncludePath("src");
-    exe.linkLibrary(picohttp);
     exe.addOptions("build_options", build_options);
     exe.install();
 
