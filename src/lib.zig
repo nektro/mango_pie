@@ -801,7 +801,6 @@ pub const Server = struct {
         // Response written, read the next request
         client.request_state = .{};
         client.buffer.clearRetainingCapacity();
-        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
     }
 
     fn onCloseResponseFile(self: *http.Server, client: *ClientState, cqe: std.os.linux.io_uring_cqe) !void {
