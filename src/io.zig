@@ -2,7 +2,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const IO_Uring = std.os.linux.IO_Uring;
 
-// TODO(vincent): make this dynamic
 const max_connections = 32;
 
 pub const RegisteredFile = struct {

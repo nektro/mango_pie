@@ -28,8 +28,6 @@ pub const ServerOptions = struct {
 ///
 /// NOTE: this is _not_ thread safe ! You must create on Server object per thread.
 pub const Server = struct {
-    const CallbackType = Callback(*http.Client);
-
     /// allocator used to allocate each client state
     root_allocator: std.mem.Allocator,
 
@@ -89,7 +87,7 @@ pub const Server = struct {
 
     /// Free list of callback objects necessary for working with the uring.
     /// See the documentation of Callback.Pool.
-    callbacks: CallbackType.Pool,
+    callbacks: Callback.Pool,
 
     /// Set of registered file descriptors for use with the uring.
     ///
@@ -131,7 +129,7 @@ pub const Server = struct {
             .registered_files = .{},
             .handler = handler,
         };
-        self.callbacks = try CallbackType.Pool.init(allocator, self, options.max_ring_entries);
+        self.callbacks = try Callback.Pool.init(allocator, self, options.max_ring_entries);
         try self.registered_fds.register(&self.ring);
     }
 
@@ -266,7 +264,7 @@ pub const Server = struct {
 
             // We know that a SQE/CQE is _always_ associated with a pointer of type Callback.
 
-            var cb = @intToPtr(*CallbackType, cqe.user_data);
+            var cb = @intToPtr(*Callback, cqe.user_data);
             defer self.callbacks.put(cb);
 
             // Call the provided function with the proper context.
