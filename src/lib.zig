@@ -60,10 +60,10 @@ const RawRequest = struct {
 
     const max_headers = 100;
 
-    method: std.http.Method = undefined,
-    path: []const u8 = undefined,
-    headers: [max_headers]c.phr_header = undefined,
-    num_headers: usize = max_headers,
+    method: std.http.Method,
+    path: []const u8,
+    headers: [max_headers]c.phr_header,
+    num_headers: usize,
 
     fn copyHeaders(self: Self, headers: []http.Header) usize {
         assert(headers.len >= self.num_headers);
@@ -105,8 +105,6 @@ const ParseRequestResult = struct {
 };
 
 fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseRequestResult {
-    var req = RawRequest{};
-
     var fbs = std.io.fixedBufferStream(raw_buffer);
     const r = fbs.reader();
 
@@ -124,12 +122,15 @@ fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseReque
 
     if (!try extras.readExpected(r, "\r\n")) return null;
 
+    var headers: [RawRequest.max_headers]c.phr_header = undefined;
+    var num_headers: usize = undefined;
+
     const buffer = fbs.buffer[fbs.pos..];
     const res = c.phr_parse_headers(
         buffer.ptr,
         buffer.len,
-        &req.headers,
-        &req.num_headers,
+        &headers,
+        &num_headers,
         previous_buffer_len,
     );
     if (res == -1) {
@@ -139,11 +140,14 @@ fn parseRequest(previous_buffer_len: usize, raw_buffer: []const u8) !?ParseReque
     if (res == -2) {
         return null;
     }
-    req.method = method;
-    req.path = path;
 
     return ParseRequestResult{
-        .raw_request = req,
+        .raw_request = .{
+            .method = method,
+            .path = path,
+            .headers = headers,
+            .num_headers = num_headers,
+        },
         .consumed = @intCast(usize, res),
     };
 }
@@ -186,7 +190,7 @@ const ResponseStateFileDescriptor = union(enum) {
 const ClientState = struct {
     const RequestState = struct {
         parse_result: ParseRequestResult = .{
-            .raw_request = .{},
+            .raw_request = undefined,
             .consumed = 0,
         },
         content_length: ?usize = null,
