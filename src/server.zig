@@ -196,13 +196,13 @@ pub const Server = struct {
         }
 
         // Queue an accept and link it to a timeout.
-        var sqe = try self.submitAccept();
+        var sqe = try self.submit(.accept, {});
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
         self.listener.timeout.tv_sec = 0;
         self.listener.timeout.tv_nsec = timeout;
 
-        _ = try self.submitAcceptLinkTimeout();
+        _ = try self.submit(.accept_link_timeout, {});
 
         self.listener.accept_waiting = true;
     }
@@ -294,26 +294,6 @@ pub const Server = struct {
         } else {
             std.log.err("unexpected error {}", .{err});
         }
-    }
-
-    fn submitAccept(self: *http.Server) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(onAccept, .{});
-        return try self.ring.accept(
-            @ptrToInt(tmp),
-            self.listener.server_fd,
-            &self.listener.peer_addr.any,
-            &self.listener.peer_addr_size,
-            0,
-        );
-    }
-
-    fn submitAcceptLinkTimeout(self: *http.Server) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
-        return self.ring.link_timeout(
-            @ptrToInt(tmp),
-            &self.listener.timeout,
-            0,
-        );
     }
 
     fn submitStandaloneClose(self: *http.Server, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
@@ -820,6 +800,25 @@ pub const Server = struct {
         var tmp = try self.callbacks.get(cb, .{client});
         return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mask, buf);
     }
+
+    fn submit(self: *http.Server, comptime tag: std.meta.FieldEnum(Action), data: extras.FieldType(Action, tag)) !*io_uring_sqe {
+        _ = data;
+        switch (tag) {
+            .accept => {
+                var tmp = try self.callbacks.get(onAccept, .{});
+                return try self.ring.accept(@ptrToInt(tmp), self.listener.server_fd, &self.listener.peer_addr.any, &self.listener.peer_addr_size, 0);
+            },
+            .accept_link_timeout => {
+                var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
+                return self.ring.link_timeout(@ptrToInt(tmp), &self.listener.timeout, 0);
+            },
+        }
+    }
+
+    const Action = union(enum) {
+        accept: void,
+        accept_link_timeout: void,
+    };
 };
 
 pub const ParseRequestResult = struct {
