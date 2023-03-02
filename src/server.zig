@@ -283,7 +283,19 @@ pub const Server = struct {
         if (err == error.Canceled) return;
 
         if (client_opt) |client| {
+            switch (err) {
+                error.ConnectionResetByPeer,
+                error.UnexpectedEOF,
+                => {
+                    return;
+                },
+                else => {
+                    std.log.err("unexpected error {}", .{err});
+                },
+            }
             _ = self.submitClose(client, client.fd, onCloseClient) catch {};
+        } else {
+            std.log.err("unexpected error {}", .{err});
         }
     }
 
@@ -334,7 +346,8 @@ pub const Server = struct {
             .CANCELED => {
                 return error.Canceled;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -360,7 +373,8 @@ pub const Server = struct {
         _ = self;
         switch (cqe.err()) {
             .CANCELED, .ALREADY, .TIME => {},
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -383,7 +397,8 @@ pub const Server = struct {
 
         switch (cqe.err()) {
             .SUCCESS => {},
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -393,7 +408,8 @@ pub const Server = struct {
         _ = self;
         switch (cqe.err()) {
             .SUCCESS => {},
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -408,7 +424,8 @@ pub const Server = struct {
             .CONNRESET => {
                 return error.ConnectionResetByPeer;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -438,7 +455,8 @@ pub const Server = struct {
             .CONNRESET => {
                 return error.ConnectionResetByPeer;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -457,6 +475,7 @@ pub const Server = struct {
         // Response written, read the next request
         client.request_state = .{};
         client.buffer.clearRetainingCapacity();
+        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
     }
 
     fn onCloseResponseFile(self: *http.Server, client: *http.Client, cqe: std.os.linux.io_uring_cqe) !void {
@@ -464,7 +483,8 @@ pub const Server = struct {
         _ = client;
         switch (cqe.err()) {
             .SUCCESS => {},
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -481,7 +501,8 @@ pub const Server = struct {
             .CONNRESET => {
                 return error.ConnectionResetByPeer;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -538,7 +559,8 @@ pub const Server = struct {
     fn onReadResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {},
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -561,7 +583,8 @@ pub const Server = struct {
             .CANCELED => {
                 return error.Canceled;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -621,7 +644,8 @@ pub const Server = struct {
             .CONNRESET => {
                 return error.ConnectionResetByPeer;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
@@ -658,7 +682,8 @@ pub const Server = struct {
                 try self.submitWriteNotFound(client);
                 return;
             },
-            else => {
+            else => |err| {
+                std.log.err("unexpected error: {}", .{err});
                 return error.Unexpected;
             },
         }
