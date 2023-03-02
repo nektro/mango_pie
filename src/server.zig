@@ -174,7 +174,7 @@ pub const Server = struct {
             //
             // Additionally we wait for at least 1 CQE to be available, if none is available the thread will be put to sleep by the kernel.
             // Note that this doesn't work if the uring is setup with busy-waiting.
-            const submitted = try self.submit(1);
+            const submitted = try self.submitAndWaitForAtLeast(1);
 
             // third step: process all available CQEs.
             //
@@ -225,10 +225,10 @@ pub const Server = struct {
         // But to be extra sure we do this submit call outside the drain loop to ensure we have flushed all queued SQEs
         // submitted in the last processCompletions call in the main loop.
 
-        _ = try self.submit(0);
+        _ = try self.submitAndWaitForAtLeast(0);
 
         while (self.pending > 0) {
-            _ = try self.submit(0);
+            _ = try self.submitAndWaitForAtLeast(0);
             _ = try self.processCompletions(self.pending);
         }
     }
@@ -239,7 +239,7 @@ pub const Server = struct {
     /// This also increments `pending` by the number of events submitted.
     ///
     /// Returns the number of events submitted.
-    fn submit(self: *http.Server, nr: u32) !usize {
+    fn submitAndWaitForAtLeast(self: *http.Server, nr: u32) !usize {
         const n = try self.ring.submit_and_wait(nr);
         self.pending += n;
         return n;
