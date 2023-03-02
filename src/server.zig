@@ -9,6 +9,9 @@ const Callback = @import("callback.zig").Callback;
 const RegisteredFile = @import("io.zig").RegisteredFile;
 const RegisteredFileDescriptors = @import("io.zig").RegisteredFileDescriptors;
 const extras = @import("extras");
+const gimme = @import("gimme");
+
+const failing_allocator = gimme.FailingAllocator.allocator();
 
 pub const ServerOptions = struct {
     max_ring_entries: u13 = 512,
@@ -151,6 +154,7 @@ pub const Server = struct {
     }
 
     /// Runs the main loop until the `running` boolean is false.
+    //
     ///
     /// `accept_timeout` controls how much time the loop can wait for an accept operation to finish.
     /// This duration is the lower bound duration before the main loop can stop when `running` is false;
@@ -190,16 +194,11 @@ pub const Server = struct {
     }
 
     fn maybeAccept(self: *http.Server, timeout: u63) !void {
-        if (!self.running.load(.SeqCst)) {
-            // we must stop: stop accepting connections.
-            return;
-        }
         if (self.listener.accept_waiting or self.clients.items.len >= self.options.max_connections) {
             return;
         }
 
         // Queue an accept and link it to a timeout.
-
         var sqe = try self.submitAccept();
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
@@ -419,7 +418,7 @@ pub const Server = struct {
 
         const read = @intCast(usize, cqe.res);
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.buffer.appendSlice(failing_allocator, client.temp_buffer[0..read]);
 
         if (try parseRequest(client.buffer.items)) |result| {
             client.request_state.parse_result = result;
@@ -450,7 +449,7 @@ pub const Server = struct {
             // Short write, write the remaining data
 
             // Remove the already written data
-            try client.buffer.replaceRange(0, written, &[0]u8{});
+            try client.buffer.replaceRange(failing_allocator, 0, written, &[0]u8{});
             _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
             return;
         }
@@ -495,7 +494,7 @@ pub const Server = struct {
             // Short write, write the remaining data
 
             // Remove the already written data
-            try client.buffer.replaceRange(0, written, &[0]u8{});
+            try client.buffer.replaceRange(failing_allocator, 0, written, &[0]u8{});
 
             _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
             return;
@@ -550,7 +549,7 @@ pub const Server = struct {
         const read = @intCast(usize, cqe.res);
         client.response_state.file.offset += read;
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.buffer.appendSlice(failing_allocator, client.temp_buffer[0..read]);
         _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
     }
 
@@ -632,7 +631,7 @@ pub const Server = struct {
 
         const read = @intCast(usize, cqe.res);
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.buffer.appendSlice(failing_allocator, client.temp_buffer[0..read]);
         client.refreshBody();
 
         const content_length = client.request_state.content_length.?;
@@ -704,7 +703,7 @@ pub const Server = struct {
                 client.response_state.headers = res.headers;
 
                 try client.startWritingResponse(data.items.len);
-                try client.buffer.appendSlice(data.items);
+                try client.buffer.appendSlice(failing_allocator, data.items);
 
                 _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
             },
@@ -754,7 +753,7 @@ pub const Server = struct {
 
         client.response_state.status_code = .not_found;
         try client.startWritingResponse(static_response.len);
-        try client.buffer.appendSlice(static_response);
+        try client.buffer.appendSlice(failing_allocator, static_response);
 
         _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
     }

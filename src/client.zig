@@ -1,5 +1,6 @@
 const std = @import("std");
 const http = @import("./lib.zig");
+const gimme = @import("gimme");
 
 pub const Client = struct {
     const RequestState = struct {
@@ -40,13 +41,12 @@ pub const Client = struct {
     temp_buffer: [std.mem.page_size]u8 = undefined,
     temp_buffer_fba: std.heap.FixedBufferAllocator = undefined,
 
-    // TODO(vincent): prevent going over the max_buffer_size somehow ("limiting" allocator ?)
     // TODO(vincent): right now we always use clearRetainingCapacity() which may keep a lot of memory
     // allocated for no reason.
     // Implement some sort of statistics to determine if we should release memory, for example:
     //  * max size used by the last 100 requests for reads or writes
     //  * duration without any request before releasing everything
-    buffer: std.ArrayList(u8),
+    buffer: std.ArrayListUnmanaged(u8),
 
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
@@ -56,14 +56,13 @@ pub const Client = struct {
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
             .fd = client_fd,
-            .buffer = undefined,
+            .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, max_buffer_size),
         };
         self.temp_buffer_fba = std.heap.FixedBufferAllocator.init(&self.temp_buffer);
-        self.buffer = try std.ArrayList(u8).initCapacity(self.gpa, max_buffer_size);
     }
 
     pub fn deinit(self: *Client) void {
-        self.buffer.deinit();
+        self.buffer.deinit(self.gpa);
     }
 
     pub fn refreshBody(self: *Client) void {
@@ -80,7 +79,7 @@ pub const Client = struct {
     }
 
     pub fn startWritingResponse(self: *Client, content_length: ?usize) !void {
-        var writer = self.buffer.writer();
+        var writer = self.buffer.writer(gimme.FailingAllocator.allocator());
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
         try writer.writeAll("Connection: close\n");
