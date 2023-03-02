@@ -12,11 +12,10 @@ const http = @import("./lib.zig");
 /// * operations not associated with a client
 pub const Callback = struct {
     const Self = @This();
-    const ClientContext = *http.Client;
 
     server: *http.Server,
-    client_context: ?ClientContext = null,
-    call: *const fn (*http.Server, ?ClientContext, io_uring_cqe) anyerror!void,
+    client_context: ?*http.Client = null,
+    call: *const fn (*http.Server, ?*http.Client, io_uring_cqe) anyerror!void,
     next: ?*Self = null,
 
     /// Pool is a pool of callback objects that facilitates lifecycle management of a callback.
@@ -78,9 +77,9 @@ pub const Callback = struct {
         /// Returns a ready to use callback or an error if none are available.
         /// `cb` must be a function with either one of the following signatures:
         ///   * fn(*http.Server, io_uring_cqe)
-        ///   * fn(*http.Server, ClientContext, io_uring_cqe)
+        ///   * fn(*http.Server, *http.Client, io_uring_cqe)
         ///
-        /// If `cb` takes a ClientContext `args` must be a tuple with at least the first element being a ClientContext.
+        /// If `cb` takes a *http.Client `args` must be a tuple with at least the first element being a *http.Client.
         pub fn get(self: *Pool, comptime cb: anytype, args: anytype) !*Self {
             const ret = self.free_list orelse return error.OutOfCallback;
             self.free_list = ret.next;
@@ -93,13 +92,13 @@ pub const Callback = struct {
                 3 => {
                     comptime {
                         expectFuncArgType(func_args, 0, *http.Server);
-                        expectFuncArgType(func_args, 1, ClientContext);
+                        expectFuncArgType(func_args, 1, *http.Client);
                         expectFuncArgType(func_args, 2, io_uring_cqe);
                     }
 
                     ret.client_context = args[0];
                     ret.call = struct {
-                        fn wrapper(server: *http.Server, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
+                        fn wrapper(server: *http.Server, client_context: ?*http.Client, cqe: io_uring_cqe) anyerror!void {
                             return cb(server, client_context.?, cqe);
                         }
                     }.wrapper;
@@ -112,7 +111,7 @@ pub const Callback = struct {
 
                     ret.client_context = null;
                     ret.call = struct {
-                        fn wrapper(server: *http.Server, client_context: ?ClientContext, cqe: io_uring_cqe) anyerror!void {
+                        fn wrapper(server: *http.Server, client_context: ?*http.Client, cqe: io_uring_cqe) anyerror!void {
                             _ = client_context;
                             return cb(server, cqe);
                         }
