@@ -196,13 +196,13 @@ pub const Server = struct {
         }
 
         // Queue an accept and link it to a timeout.
-        var sqe = try self.submit(.accept, {});
+        var sqe = try self.submit(.accept, {}, onAccept);
         sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
         self.listener.timeout.tv_sec = 0;
         self.listener.timeout.tv_nsec = timeout;
 
-        _ = try self.submit(.accept_link_timeout, {});
+        _ = try self.submit(.accept_link_timeout, {}, onAcceptLinkTimeout);
 
         self.listener.accept_waiting = true;
     }
@@ -343,7 +343,7 @@ pub const Server = struct {
         errdefer client.deinit();
 
         try self.clients.append(self.root_allocator, client);
-        _ = try self.submitRead(client, client_fd, 0, onReadRequest);
+        _ = try self.submit(.read, .{ client, client_fd, 0 }, onReadRequest);
     }
 
     fn onAcceptLinkTimeout(self: *http.Server, cqe: std.os.linux.io_uring_cqe) !void {
@@ -419,7 +419,7 @@ pub const Server = struct {
             try processRequest(self, client);
         } else {
             // Not enough data, read more.
-            _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+            _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadRequest);
         }
     }
 
@@ -445,14 +445,14 @@ pub const Server = struct {
 
             // Remove the already written data
             try client.buffer.replaceRange(0, written, &[0]u8{});
-            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+            _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
             return;
         }
 
         // Response written, read the next request
         client.request_state = .{};
         client.buffer.clearRetainingCapacity();
-        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+        _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadRequest);
     }
 
     fn onCloseResponseFile(self: *http.Server, client: *http.Client, cqe: std.os.linux.io_uring_cqe) !void {
@@ -494,7 +494,7 @@ pub const Server = struct {
             // Remove the already written data
             try client.buffer.replaceRange(0, written, &[0]u8{});
 
-            _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
+            _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseFile);
             return;
         }
 
@@ -507,10 +507,10 @@ pub const Server = struct {
 
             switch (client.response_state.file.fd) {
                 .direct => |fd| {
-                    _ = try self.submitRead(client, fd, offset, onReadResponseFile);
+                    _ = try self.submit(.read, .{ client, fd, offset }, onReadResponseFile);
                 },
                 .registered => |fd| {
-                    var sqe = try self.submitRead(client, fd, offset, onReadResponseFile);
+                    var sqe = try self.submit(.read, .{ client, fd, offset }, onReadResponseFile);
                     sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
                 },
             }
@@ -530,7 +530,7 @@ pub const Server = struct {
 
         // Reset the client state
         client.reset();
-        _ = try self.submitRead(client, client.fd, 0, onReadRequest);
+        _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadRequest);
     }
 
     fn onReadResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
@@ -549,7 +549,7 @@ pub const Server = struct {
         client.response_state.file.offset += read;
 
         try client.buffer.appendSlice(client.temp_buffer[0..read]);
-        _ = try self.submitWrite(client, client.fd, 0, onWriteResponseFile);
+        _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseFile);
     }
 
     fn onStatxResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
@@ -574,7 +574,7 @@ pub const Server = struct {
 
         // If the file has already been registered, use its registered file descriptor.
         if (self.registered_files.get(client.response_state.file.path)) |entry| {
-            var sqe = try self.submitRead(client, entry.fd, 0, onReadResponseFile);
+            var sqe = try self.submit(.read, .{ client, entry.fd, 0 }, onReadResponseFile);
             sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
             return;
         }
@@ -600,13 +600,13 @@ pub const Server = struct {
                 };
             }
 
-            var sqe = try self.submitRead(client, registered_fd, 0, onReadResponseFile);
+            var sqe = try self.submit(.read, .{ client, registered_fd, 0 }, onReadResponseFile);
             sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
             return;
         }
 
         // The file isn't registered and we weren't able to register it, do a standard read.
-        _ = try self.submitRead(client, fd, 0, onReadResponseFile);
+        _ = try self.submit(.read, .{ client, fd, 0 }, onReadResponseFile);
     }
 
     fn onReadBody(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
@@ -640,7 +640,7 @@ pub const Server = struct {
 
         if (body.len < content_length) {
             // Not enough data, read more.
-            _ = try self.submitRead(client, client.fd, 0, onReadBody);
+            _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadBody);
             return;
         }
 
@@ -707,7 +707,7 @@ pub const Server = struct {
                 try client.startWritingResponse(data.items.len);
                 try client.buffer.appendSlice(data.items);
 
-                _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+                _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
             },
             .send_file => |res| {
                 client.response_state.status_code = res.status_code;
@@ -725,7 +725,7 @@ pub const Server = struct {
                     try client.startWritingResponse(registered_file.size);
 
                     // Now read the response file
-                    var sqe = try self.submitRead(client, registered_file.fd, 0, onReadResponseFile);
+                    var sqe = try self.submit(.read, .{ client, registered_file.fd, 0 }, onReadResponseFile);
                     sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
                 } else {
                     var sqe = try self.submitOpenFile(
@@ -757,7 +757,7 @@ pub const Server = struct {
         try client.startWritingResponse(static_response.len);
         try client.buffer.appendSlice(static_response);
 
-        _ = try self.submitWrite(client, client.fd, 0, onWriteResponseBuffer);
+        _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
     }
 
     fn processRequest(self: *http.Server, client: *http.Client) !void {
@@ -768,7 +768,7 @@ pub const Server = struct {
             client.refreshBody();
 
             if (client.request_state.body) |_| {
-                _ = try self.submitRead(client, client.fd, 0, onReadBody);
+                _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadBody);
                 return;
             }
 
@@ -781,16 +781,6 @@ pub const Server = struct {
         try self.callHandler(client);
     }
 
-    fn submitRead(self: *http.Server, client: *http.Client, fd: std.os.socket_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{client});
-        return self.ring.read(@ptrToInt(tmp), fd, .{ .buffer = &client.temp_buffer }, offset);
-    }
-
-    fn submitWrite(self: *http.Server, client: *http.Client, fd: std.os.fd_t, offset: u64, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{client});
-        return self.ring.write(@ptrToInt(tmp), fd, client.buffer.items, offset);
-    }
-
     fn submitOpenFile(self: *http.Server, client: *http.Client, path: [:0]const u8, flags: u32, mode: std.os.mode_t, comptime cb: anytype) !*io_uring_sqe {
         var tmp = try self.callbacks.get(cb, .{client});
         return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mode);
@@ -801,16 +791,25 @@ pub const Server = struct {
         return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mask, buf);
     }
 
-    fn submit(self: *http.Server, comptime tag: std.meta.FieldEnum(Action), data: extras.FieldType(Action, tag)) !*io_uring_sqe {
-        _ = data;
+    fn submit(self: *http.Server, comptime tag: std.meta.FieldEnum(Action), data: extras.FieldType(Action, tag), comptime cb: anytype) !*io_uring_sqe {
         switch (tag) {
             .accept => {
-                var tmp = try self.callbacks.get(onAccept, .{});
+                comptime assert(cb == onAccept);
+                var tmp = try self.callbacks.get(cb, .{});
                 return try self.ring.accept(@ptrToInt(tmp), self.listener.server_fd, &self.listener.peer_addr.any, &self.listener.peer_addr_size, 0);
             },
             .accept_link_timeout => {
-                var tmp = try self.callbacks.get(onAcceptLinkTimeout, .{});
+                comptime assert(cb == onAcceptLinkTimeout);
+                var tmp = try self.callbacks.get(cb, .{});
                 return self.ring.link_timeout(@ptrToInt(tmp), &self.listener.timeout, 0);
+            },
+            .read => {
+                var tmp = try self.callbacks.get(cb, .{data[0]});
+                return self.ring.read(@ptrToInt(tmp), data[1], .{ .buffer = &data[0].temp_buffer }, data[2]);
+            },
+            .write => {
+                var tmp = try self.callbacks.get(cb, .{data[0]});
+                return self.ring.write(@ptrToInt(tmp), data[1], data[0].buffer.items, data[2]);
             },
         }
     }
@@ -818,6 +817,8 @@ pub const Server = struct {
     const Action = union(enum) {
         accept: void,
         accept_link_timeout: void,
+        read: struct { *http.Client, std.os.socket_t, u64 },
+        write: struct { *http.Client, std.os.fd_t, u64 },
     };
 };
 
