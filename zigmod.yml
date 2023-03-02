@@ -5,7 +5,6 @@ license: MIT
 description: Experimental io_uring HTTP server in Zig
 dependencies:
   - src: git https://github.com/nektro/zig-extras
-  - src: git https://github.com/nektro/gimme
 
 root_dependencies:
   - src: git https://github.com/nektro/zig-signal

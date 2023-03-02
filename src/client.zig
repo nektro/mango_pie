@@ -1,6 +1,5 @@
 const std = @import("std");
 const http = @import("./lib.zig");
-const gimme = @import("gimme");
 
 pub const Client = struct {
     const RequestState = struct {
@@ -15,7 +14,6 @@ pub const Client = struct {
 
     /// Holds state used to send a response to the client.
     const ResponseState = struct {
-        /// status code and header are overwritable in the handler
         status_code: std.http.Status = .ok,
         headers: []http.Header = &[_]http.Header{},
 
@@ -46,7 +44,7 @@ pub const Client = struct {
     // Implement some sort of statistics to determine if we should release memory, for example:
     //  * max size used by the last 100 requests for reads or writes
     //  * duration without any request before releasing everything
-    buffer: std.ArrayListUnmanaged(u8),
+    buffer: std.ArrayList(u8),
 
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
@@ -56,13 +54,13 @@ pub const Client = struct {
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
             .fd = client_fd,
-            .buffer = try std.ArrayListUnmanaged(u8).initCapacity(allocator, max_buffer_size),
+            .buffer = try std.ArrayList(u8).initCapacity(allocator, max_buffer_size),
         };
         self.temp_buffer_fba = std.heap.FixedBufferAllocator.init(&self.temp_buffer);
     }
 
     pub fn deinit(self: *Client) void {
-        self.buffer.deinit(self.gpa);
+        self.buffer.deinit();
     }
 
     pub fn refreshBody(self: *Client) void {
@@ -79,7 +77,7 @@ pub const Client = struct {
     }
 
     pub fn startWritingResponse(self: *Client, content_length: ?usize) !void {
-        var writer = self.buffer.writer(gimme.FailingAllocator.allocator());
+        var writer = self.buffer.writer();
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
         try writer.writeAll("Connection: close\n");
