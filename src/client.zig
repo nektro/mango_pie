@@ -35,12 +35,8 @@ pub const Client = struct {
     peer: http.Peer,
     fd: std.os.socket_t,
 
-    temp_buffer: [std.mem.page_size]u8 = undefined,
-
-    // Implement some sort of statistics to determine if we should release memory, for example:
-    //  * max size used by the last 100 requests for reads or writes
-    //  * duration without any request before releasing everything
-    buffer: std.ArrayList(u8),
+    read_buffer: [std.mem.page_size]u8 = undefined,
+    write_buffer: std.ArrayList(u8),
 
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
@@ -50,18 +46,18 @@ pub const Client = struct {
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
             .fd = client_fd,
-            .buffer = try std.ArrayList(u8).initCapacity(allocator, max_buffer_size),
+            .write_buffer = try std.ArrayList(u8).initCapacity(allocator, max_buffer_size),
         };
     }
 
     pub fn deinit(self: *Client) void {
-        self.buffer.deinit();
+        self.write_buffer.deinit();
     }
 
     pub fn refreshBody(self: *Client) void {
         const consumed = self.request_state.parse_result.consumed;
         if (consumed > 0) {
-            self.request_state.body = self.buffer.items[consumed..];
+            self.request_state.body = self.write_buffer.items[consumed..];
         }
     }
 
@@ -70,11 +66,11 @@ pub const Client = struct {
 
         self.request_state = .{};
         self.response_state = .{};
-        self.buffer.clearRetainingCapacity();
+        self.write_buffer.clearRetainingCapacity();
     }
 
     pub fn startWritingResponse(self: *Client, content_length: ?usize) !void {
-        var writer = self.buffer.writer();
+        var writer = self.write_buffer.writer();
 
         try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
         try writer.writeAll("Connection: close\n");

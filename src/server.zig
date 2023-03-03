@@ -396,9 +396,9 @@ pub const Server = struct {
 
         const read = @intCast(usize, cqe.res);
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.write_buffer.appendSlice(client.read_buffer[0..read]);
 
-        if (try parseRequest(client.buffer.items)) |result| {
+        if (try parseRequest(client.write_buffer.items)) |result| {
             client.request_state.parse_result = result;
             try processRequest(self, client);
         } else {
@@ -424,18 +424,18 @@ pub const Server = struct {
 
         const written = @intCast(usize, cqe.res);
 
-        if (written < client.buffer.items.len) {
+        if (written < client.write_buffer.items.len) {
             // Short write, write the remaining data
 
             // Remove the already written data
-            try client.buffer.replaceRange(0, written, &[0]u8{});
+            try client.write_buffer.replaceRange(0, written, &[0]u8{});
             _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
             return;
         }
 
         // Response written, read the next request
         client.request_state = .{};
-        client.buffer.clearRetainingCapacity();
+        client.write_buffer.clearRetainingCapacity();
         _ = try self.submit(.read, .{ client, client.fd, 0 }, onReadRequest);
     }
 
@@ -452,7 +452,7 @@ pub const Server = struct {
     }
 
     fn onWriteResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
-        assert(client.buffer.items.len > 0);
+        assert(client.write_buffer.items.len > 0);
 
         switch (cqe.err()) {
             .SUCCESS => {},
@@ -472,11 +472,11 @@ pub const Server = struct {
         }
 
         const written = @intCast(usize, cqe.res);
-        if (written < client.buffer.items.len) {
+        if (written < client.write_buffer.items.len) {
             // Short write, write the remaining data
 
             // Remove the already written data
-            try client.buffer.replaceRange(0, written, &[0]u8{});
+            try client.write_buffer.replaceRange(0, written, &[0]u8{});
 
             _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseFile);
             return;
@@ -485,7 +485,7 @@ pub const Server = struct {
         if (client.response_state.file.offset < client.response_state.file.statx_buf.size) {
             // More data to read from the file, submit another read
 
-            client.buffer.clearRetainingCapacity();
+            client.write_buffer.clearRetainingCapacity();
 
             const offset = client.response_state.file.offset;
 
@@ -532,14 +532,14 @@ pub const Server = struct {
         const read = @intCast(usize, cqe.res);
         client.response_state.file.offset += read;
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.write_buffer.appendSlice(client.read_buffer[0..read]);
         _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseFile);
     }
 
     fn onStatxResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
         switch (cqe.err()) {
             .SUCCESS => {
-                assert(client.buffer.items.len == 0);
+                assert(client.write_buffer.items.len == 0);
             },
             .CANCELED => {
                 return error.Canceled;
@@ -616,7 +616,7 @@ pub const Server = struct {
 
         const read = @intCast(usize, cqe.res);
 
-        try client.buffer.appendSlice(client.temp_buffer[0..read]);
+        try client.write_buffer.appendSlice(client.read_buffer[0..read]);
         client.refreshBody();
 
         const content_length = client.request_state.content_length.?;
@@ -633,7 +633,7 @@ pub const Server = struct {
     }
 
     fn onOpenResponseFile(self: *http.Server, client: *http.Client, cqe: io_uring_cqe) !void {
-        assert(client.buffer.items.len == 0);
+        assert(client.write_buffer.items.len == 0);
 
         switch (cqe.err()) {
             .SUCCESS => {},
@@ -672,7 +672,7 @@ pub const Server = struct {
         errdefer client.reset();
 
         // At this point the request data is no longer needed so we can clear the buffer.
-        client.buffer.clearRetainingCapacity();
+        client.write_buffer.clearRetainingCapacity();
 
         // Process the response:
         // * `response` contains a simple buffer that we can write to the socket straight away.
@@ -684,7 +684,7 @@ pub const Server = struct {
                 client.response_state.headers = res.headers;
 
                 try client.startWritingResponse(data.items.len);
-                try client.buffer.appendSlice(data.items);
+                try client.write_buffer.appendSlice(data.items);
 
                 _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
             },
@@ -720,7 +720,7 @@ pub const Server = struct {
 
         client.response_state.status_code = .not_found;
         try client.startWritingResponse(static_response.len);
-        try client.buffer.appendSlice(static_response);
+        try client.write_buffer.appendSlice(static_response);
 
         _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
     }
@@ -760,11 +760,11 @@ pub const Server = struct {
             },
             .read => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
-                return self.ring.read(@ptrToInt(tmp), data[1], .{ .buffer = &data[0].temp_buffer }, data[2]);
+                return self.ring.read(@ptrToInt(tmp), data[1], .{ .buffer = &data[0].read_buffer }, data[2]);
             },
             .write => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
-                return self.ring.write(@ptrToInt(tmp), data[1], data[0].buffer.items, data[2]);
+                return self.ring.write(@ptrToInt(tmp), data[1], data[0].write_buffer.items, data[2]);
             },
             .open => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
