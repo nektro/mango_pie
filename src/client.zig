@@ -21,7 +21,7 @@ pub const Client = struct {
         file: File = .{},
 
         const File = struct {
-            path: [:0]const u8 = undefined,
+            path: [:0]const u8 = "",
             fd: ResponseStateFileDescriptor = undefined,
             statx_buf: std.os.linux.Statx = undefined,
 
@@ -51,6 +51,7 @@ pub const Client = struct {
     }
 
     pub fn deinit(self: *Client) void {
+        self.reset();
         self.write_buffer.deinit();
     }
 
@@ -62,7 +63,7 @@ pub const Client = struct {
     }
 
     pub fn reset(self: *Client) void {
-        if (self.response_state.file.offset > 0) self.gpa.free(self.response_state.file.path);
+        if (self.response_state.file.path.len > 0) self.gpa.free(self.response_state.file.path);
 
         self.request_state = .{};
         self.response_state = .{};
