@@ -820,11 +820,11 @@ fn parseRequest(raw_buffer: []const u8) !?ParseRequestResult {
 
     while (true) {
         var hdr_temp: [1024]u8 = undefined;
-        const hdr_opt = r.readUntilDelimiterOrEof(&hdr_temp, '\r') catch return error.BadRequest1;
-        if ((r.readByte() catch return null) != '\n') return error.BadRequest2;
+        const hdr_opt = r.readUntilDelimiterOrEof(&hdr_temp, '\r') catch return error.BadRequest;
+        if ((r.readByte() catch return null) != '\n') return error.BadRequest;
         const hdr = std.mem.trimRight(u8, hdr_opt orelse return null, "\r");
         if (hdr.len == 0) break;
-        if (std.mem.indexOfScalar(u8, hdr, ':') == null) return error.BadRequest3;
+        if (std.mem.indexOfScalar(u8, hdr, ':') == null) return error.BadRequest;
         var iter = std.mem.split(u8, hdr, ": ");
         headers[num_headers] = .{
             .name = iter.first(),
