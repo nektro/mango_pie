@@ -831,7 +831,7 @@ fn parseRequest(raw_buffer: []const u8) !?ParseRequestResult {
             .value = iter.rest(),
         };
         num_headers += 1;
-        if (num_headers == http.Headers.max) break;
+        if (num_headers == http.Headers.max) return error.TooManyHeaders;
     }
 
     return ParseRequestResult{
