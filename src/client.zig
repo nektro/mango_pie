@@ -73,16 +73,16 @@ pub const Client = struct {
     pub fn startWritingResponse(self: *Client, content_length: ?usize) !void {
         var writer = self.write_buffer.writer();
 
-        try writer.print("HTTP/1.1 {d} {s}\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
-        try writer.writeAll("Connection: close\n");
+        try writer.print("HTTP/1.1 {d} {s}\r\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
+        try writer.writeAll("Connection: close\r\n");
 
         for (self.response_state.headers) |header| {
-            try writer.print("{s}: {s}\n", .{ header.name, header.value });
+            try writer.print("{s}: {s}\r\n", .{ header.name, header.value });
         }
         if (content_length) |n| {
-            try writer.print("Content-Length: {d}\n", .{n});
+            try writer.print("Content-Length: {d}\r\n", .{n});
         }
-        try writer.print("\n", .{});
+        try writer.print("\r\n", .{});
     }
 };
 
