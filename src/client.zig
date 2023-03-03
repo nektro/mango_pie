@@ -21,7 +21,7 @@ pub const Client = struct {
         file: File = .{},
 
         const File = struct {
-            path: [:0]u8 = undefined,
+            path: [:0]const u8 = undefined,
             fd: ResponseStateFileDescriptor = undefined,
             statx_buf: std.os.linux.Statx = undefined,
 
@@ -35,12 +35,8 @@ pub const Client = struct {
     peer: http.Peer,
     fd: std.os.socket_t,
 
-    // Buffer and allocator used for small allocations (nul-terminated path, integer to int conversions etc).
     temp_buffer: [std.mem.page_size]u8 = undefined,
-    temp_buffer_fba: std.heap.FixedBufferAllocator = undefined,
 
-    // TODO(vincent): right now we always use clearRetainingCapacity() which may keep a lot of memory
-    // allocated for no reason.
     // Implement some sort of statistics to determine if we should release memory, for example:
     //  * max size used by the last 100 requests for reads or writes
     //  * duration without any request before releasing everything
@@ -56,7 +52,6 @@ pub const Client = struct {
             .fd = client_fd,
             .buffer = try std.ArrayList(u8).initCapacity(allocator, max_buffer_size),
         };
-        self.temp_buffer_fba = std.heap.FixedBufferAllocator.init(&self.temp_buffer);
     }
 
     pub fn deinit(self: *Client) void {
@@ -71,6 +66,8 @@ pub const Client = struct {
     }
 
     pub fn reset(self: *Client) void {
+        if (self.response_state.file.offset > 0) self.gpa.free(self.response_state.file.path);
+
         self.request_state = .{};
         self.response_state = .{};
         self.buffer.clearRetainingCapacity();

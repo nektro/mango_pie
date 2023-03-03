@@ -638,8 +638,6 @@ pub const Server = struct {
         switch (cqe.err()) {
             .SUCCESS => {},
             .NOENT => {
-                client.temp_buffer_fba.reset();
-
                 try self.submitWriteNotFound(client);
                 return;
             },
@@ -650,8 +648,6 @@ pub const Server = struct {
         }
 
         client.response_state.file.fd = .{ .direct = @intCast(std.os.fd_t, cqe.res) };
-
-        client.temp_buffer_fba.reset();
     }
 
     fn callHandler(self: *http.Server, client: *http.Client) !void {
@@ -673,8 +669,7 @@ pub const Server = struct {
             data.writer(arena.allocator()),
             req,
         );
-        // TODO(vincent): cleanup in case of errors ?
-        // errdefer client.reset();
+        errdefer client.reset();
 
         // At this point the request data is no longer needed so we can clear the buffer.
         client.buffer.clearRetainingCapacity();
@@ -696,11 +691,10 @@ pub const Server = struct {
             .send_file => |res| {
                 client.response_state.status_code = res.status_code;
                 client.response_state.headers = res.headers;
-                client.response_state.file.path = try client.temp_buffer_fba.allocator().dupeZ(u8, res.path);
+                client.response_state.file.path = try client.gpa.dupeZ(u8, res.path);
 
                 if (self.registered_files.get(client.response_state.file.path)) |registered_file| {
                     client.response_state.file.fd = .{ .registered = registered_file.fd };
-                    client.temp_buffer_fba.reset();
 
                     // Prepare the preambule + headers.
                     // This will be written to the socket on the next write operation following
