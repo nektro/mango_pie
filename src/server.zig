@@ -290,26 +290,10 @@ pub const Server = struct {
                     std.log.err("unexpected error {}", .{err});
                 },
             }
-            _ = self.submitClose(client, client.fd, onCloseClient) catch {};
+            _ = self.submit(.close, .{ client, client.fd }, onCloseClient) catch {};
         } else {
             std.log.err("unexpected error {}", .{err});
         }
-    }
-
-    fn submitStandaloneClose(self: *http.Server, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{});
-        return self.ring.close(
-            @ptrToInt(tmp),
-            fd,
-        );
-    }
-
-    fn submitClose(self: *http.Server, client: *http.Client, fd: std.os.fd_t, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{client});
-        return self.ring.close(
-            @ptrToInt(tmp),
-            fd,
-        );
     }
 
     fn onAccept(self: *http.Server, cqe: std.os.linux.io_uring_cqe) !void {
@@ -522,7 +506,7 @@ pub const Server = struct {
         // Close the response file descriptor
         switch (client.response_state.file.fd) {
             .direct => |fd| {
-                _ = try self.submitClose(client, fd, onCloseResponseFile);
+                _ = try self.submit(.close, .{ client, fd }, onCloseResponseFile);
                 client.response_state.file.fd = .{ .direct = -1 };
             },
             .registered => {},
@@ -728,23 +712,10 @@ pub const Server = struct {
                     var sqe = try self.submit(.read, .{ client, registered_file.fd, 0 }, onReadResponseFile);
                     sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
                 } else {
-                    var sqe = try self.submitOpenFile(
-                        client,
-                        client.response_state.file.path,
-                        std.os.linux.O.RDONLY | std.os.linux.O.NOFOLLOW,
-                        0o644,
-                        onOpenResponseFile,
-                    );
+                    var sqe = try self.submit(.open, .{ client, client.response_state.file.path, std.os.linux.O.RDONLY | std.os.linux.O.NOFOLLOW, 0o644 }, onOpenResponseFile);
                     sqe.flags |= std.os.linux.IOSQE_IO_LINK;
 
-                    _ = try self.submitStatxFile(
-                        client,
-                        client.response_state.file.path,
-                        std.os.linux.AT.SYMLINK_NOFOLLOW,
-                        std.os.linux.STATX_SIZE,
-                        &client.response_state.file.statx_buf,
-                        onStatxResponseFile,
-                    );
+                    _ = try self.submit(.statx, .{ client, client.response_state.file.path, std.os.linux.AT.SYMLINK_NOFOLLOW, std.os.linux.STATX_SIZE, &client.response_state.file.statx_buf }, onStatxResponseFile);
                 }
             },
         }
@@ -781,17 +752,7 @@ pub const Server = struct {
         try self.callHandler(client);
     }
 
-    fn submitOpenFile(self: *http.Server, client: *http.Client, path: [:0]const u8, flags: u32, mode: std.os.mode_t, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{client});
-        return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mode);
-    }
-
-    fn submitStatxFile(self: *http.Server, client: *http.Client, path: [:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx, comptime cb: anytype) !*io_uring_sqe {
-        var tmp = try self.callbacks.get(cb, .{client});
-        return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, path, flags, mask, buf);
-    }
-
-    fn submit(self: *http.Server, comptime tag: std.meta.FieldEnum(Action), data: extras.FieldType(Action, tag), comptime cb: anytype) !*io_uring_sqe {
+    fn submit(self: *http.Server, comptime tag: std.meta.FieldEnum(Submission), data: extras.FieldType(Submission, tag), comptime cb: anytype) !*io_uring_sqe {
         switch (tag) {
             .accept => {
                 comptime assert(cb == onAccept);
@@ -811,14 +772,29 @@ pub const Server = struct {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
                 return self.ring.write(@ptrToInt(tmp), data[1], data[0].buffer.items, data[2]);
             },
+            .open => {
+                var tmp = try self.callbacks.get(cb, .{data[0]});
+                return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, @ptrCast([:0]const u8, data[1]), data[2], data[3]);
+            },
+            .statx => {
+                var tmp = try self.callbacks.get(cb, .{data[0]});
+                return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, @ptrCast([:0]const u8, data[1]), data[2], data[3], data[4]);
+            },
+            .close => {
+                var tmp = try self.callbacks.get(cb, .{data[0]});
+                return self.ring.close(@ptrToInt(tmp), data[1]);
+            },
         }
     }
 
-    const Action = union(enum) {
+    const Submission = union(enum) {
         accept: void,
         accept_link_timeout: void,
         read: struct { *http.Client, std.os.socket_t, u64 },
         write: struct { *http.Client, std.os.fd_t, u64 },
+        open: struct { *http.Client, []const u8, u32, std.os.mode_t },
+        statx: struct { *http.Client, []const u8, u32, u32, *std.os.linux.Statx },
+        close: struct { *http.Client, std.os.fd_t },
     };
 };
 
