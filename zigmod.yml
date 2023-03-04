@@ -3,6 +3,7 @@ name: mango_pie
 main: src/lib.zig
 license: MIT
 description: Experimental io_uring HTTP server in Zig
+min_zig_version: 0.11.0-dev.1845+e0d390463
 dependencies:
   - src: git https://github.com/nektro/zig-extras
 

@@ -786,8 +786,8 @@ pub const Server = struct {
         accept_link_timeout: void,
         read: struct { *http.Client, std.os.socket_t, u64 },
         write: struct { *http.Client, std.os.fd_t, u64 },
-        open: struct { *http.Client, []const u8, u32, std.os.mode_t },
-        statx: struct { *http.Client, []const u8, u32, u32, *std.os.linux.Statx },
+        open: struct { *http.Client, [:0]const u8, u32, std.os.mode_t },
+        statx: struct { *http.Client, [:0]const u8, u32, u32, *std.os.linux.Statx },
         close: struct { *http.Client, std.os.fd_t },
     };
 };
