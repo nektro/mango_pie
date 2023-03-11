@@ -41,12 +41,12 @@ pub const Client = struct {
     request_state: RequestState = .{},
     response_state: ResponseState = .{},
 
-    pub fn init(self: *Client, allocator: std.mem.Allocator, peer_addr: std.net.Address, client_fd: std.os.socket_t, max_buffer_size: usize) !void {
+    pub fn init(self: *Client, allocator: std.mem.Allocator, peer_addr: std.net.Address, client_fd: std.os.socket_t) void {
         self.* = .{
             .gpa = allocator,
             .peer = .{ .addr = peer_addr },
             .fd = client_fd,
-            .write_buffer = try std.ArrayList(u8).initCapacity(allocator, max_buffer_size),
+            .write_buffer = std.ArrayList(u8).init(allocator),
         };
     }
 

@@ -317,15 +317,11 @@ pub const Server = struct {
 
         var client = try self.root_allocator.create(http.Client);
         errdefer self.root_allocator.destroy(client);
-
-        try client.init(
+        client.init(
             self.root_allocator,
             self.listener.peer_addr,
             client_fd,
-            self.options.max_buffer_size,
         );
-        errdefer client.deinit();
-
         try self.clients.append(self.root_allocator, client);
         _ = try self.submit(.read, .{ client, client_fd, 0 }, onReadRequest);
     }
