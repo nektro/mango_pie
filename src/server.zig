@@ -768,11 +768,11 @@ pub const Server = struct {
             },
             .open => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
-                return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, @ptrCast([:0]const u8, data[1]), data[2], data[3]);
+                return try self.ring.openat(@ptrToInt(tmp), std.os.linux.AT.FDCWD, data[1], data[2], data[3]);
             },
             .statx => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
-                return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, @ptrCast([:0]const u8, data[1]), data[2], data[3], data[4]);
+                return self.ring.statx(@ptrToInt(tmp), std.os.linux.AT.FDCWD, data[1], data[2], data[3], data[4]);
             },
             .close => {
                 var tmp = try self.callbacks.get(cb, .{data[0]});
