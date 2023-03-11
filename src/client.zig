@@ -15,7 +15,7 @@ pub const Client = struct {
     /// Holds state used to send a response to the client.
     const ResponseState = struct {
         status_code: std.http.Status = .ok,
-        headers: []http.Header = &[_]http.Header{},
+        headers: []const http.Header = &[_]http.Header{},
 
         /// state used when we need to send a static file from the filesystem.
         file: File = .{},
@@ -64,6 +64,11 @@ pub const Client = struct {
 
     pub fn reset(self: *Client) void {
         if (self.response_state.file.path.len > 0) self.gpa.free(self.response_state.file.path);
+        for (self.response_state.headers) |item| {
+            self.gpa.free(item.name);
+            self.gpa.free(item.value);
+        }
+        self.gpa.free(self.response_state.headers);
 
         self.request_state = .{};
         self.response_state = .{};
