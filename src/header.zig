@@ -19,6 +19,14 @@ pub const Headers = struct {
         };
     }
 
+    pub fn from(source: []const http.Header) Headers {
+        var data: [max]Header = undefined;
+        for (source, 0..) |item, i| {
+            data[i] = item;
+        }
+        return create(data, source.len);
+    }
+
     pub fn get(self: Headers, name: []const u8) ?[]const u8 {
         for (self.view) |item| {
             if (std.ascii.eqlIgnoreCase(name, item.name)) {
