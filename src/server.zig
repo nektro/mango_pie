@@ -268,32 +268,31 @@ pub const Server = struct {
             // Note that while the callback function signature can return an error we don't bubble them up
             // simply because we can't shutdown the server due to a processing error.
 
-            cb.call(cb.server, cb.client_context, cqe) catch |err| {
-                self.handleCallbackError(cb.client_context, err);
+            cb.call(cb.server, cb.client_context, cqe) catch |err| blk: {
+                if (err == error.Canceled) break :blk;
+                if (cb.client_context) |client| {
+                    switch (err) {
+                        error.ConnectionResetByPeer,
+                        error.UnexpectedEOF,
+                        => {
+                            break :blk;
+                        },
+                        else => |e| {
+                            std.log.err("unexpected error: {}", .{e});
+                            if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
+                            std.debug.dumpCurrentStackTrace(null);
+                            client.reset();
+                            self.submitWriteInternalServerError(client) catch {};
+                        },
+                    }
+                    _ = self.submit(.close, .{ client, client.fd }, onCloseClient) catch {};
+                } else {
+                    std.log.err("unexpected error: {}", .{err});
+                }
             };
         }
         self.pending -= cqe_count;
         return cqe_count;
-    }
-
-    fn handleCallbackError(self: *http.Server, client_opt: ?*http.Client, err: anyerror) void {
-        if (err == error.Canceled) return;
-
-        if (client_opt) |client| {
-            switch (err) {
-                error.ConnectionResetByPeer,
-                error.UnexpectedEOF,
-                => {
-                    return;
-                },
-                else => {
-                    std.log.err("unexpected error {}", .{err});
-                },
-            }
-            _ = self.submit(.close, .{ client, client.fd }, onCloseClient) catch {};
-        } else {
-            std.log.err("unexpected error {}", .{err});
-        }
     }
 
     fn onAccept(self: *http.Server, cqe: std.os.linux.io_uring_cqe) !void {
@@ -659,12 +658,19 @@ pub const Server = struct {
         var data = std.ArrayListUnmanaged(u8){};
         errdefer data.deinit(arena.allocator());
 
-        const response = try self.handler(
+        const response = self.handler(
             arena.allocator(),
             client.peer,
             data.writer(arena.allocator()),
             req,
-        );
+        ) catch |err| {
+            std.log.err("unexpected error: {}", .{err});
+            if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace.*);
+            std.debug.dumpCurrentStackTrace(null);
+            client.reset();
+            try self.submitWriteInternalServerError(client);
+            return;
+        };
         errdefer client.reset();
 
         // At this point the request data is no longer needed so we can clear the buffer.
@@ -715,6 +721,16 @@ pub const Server = struct {
         const static_response = "Not Found";
 
         client.response_state.status_code = .not_found;
+        try client.startWritingResponse(static_response.len);
+        try client.write_buffer.appendSlice(static_response);
+
+        _ = try self.submit(.write, .{ client, client.fd, 0 }, onWriteResponseBuffer);
+    }
+
+    fn submitWriteInternalServerError(self: *http.Server, client: *http.Client) !void {
+        const static_response = "Internal Server Error";
+
+        client.response_state.status_code = .internal_server_error;
         try client.startWritingResponse(static_response.len);
         try client.write_buffer.appendSlice(static_response);
 
