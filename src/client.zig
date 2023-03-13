@@ -15,7 +15,7 @@ pub const Client = struct {
     /// Holds state used to send a response to the client.
     const ResponseState = struct {
         status_code: std.http.Status = .ok,
-        headers: []const http.Header = &[_]http.Header{},
+        headers: http.Headers = undefined,
 
         /// state used when we need to send a static file from the filesystem.
         file: File = .{},
@@ -64,11 +64,6 @@ pub const Client = struct {
 
     pub fn reset(self: *Client) void {
         if (self.response_state.file.path.len > 0) self.gpa.free(self.response_state.file.path);
-        for (self.response_state.headers) |item| {
-            self.gpa.free(item.name);
-            self.gpa.free(item.value);
-        }
-        self.gpa.free(self.response_state.headers);
 
         self.request_state = .{};
         self.response_state = .{};
@@ -81,7 +76,7 @@ pub const Client = struct {
         try writer.print("HTTP/1.1 {d} {s}\r\n", .{ @enumToInt(self.response_state.status_code), self.response_state.status_code.phrase().? });
         try writer.writeAll("Connection: close\r\n");
 
-        for (self.response_state.headers) |header| {
+        for (self.response_state.headers.view) |header| {
             try writer.print("{s}: {s}\r\n", .{ header.name, header.value });
         }
         if (content_length) |n| {

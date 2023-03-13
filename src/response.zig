@@ -5,12 +5,12 @@ pub const Response = union(enum) {
     /// The response is a simple buffer.
     response: struct {
         status_code: std.http.Status,
-        headers: []const http.Header,
+        headers: http.Headers,
     },
     /// The response is a static file that will be read from the filesystem.
     send_file: struct {
         status_code: std.http.Status,
-        headers: []const http.Header,
+        headers: http.Headers,
         path: []const u8,
     },
 };

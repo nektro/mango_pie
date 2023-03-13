@@ -677,7 +677,7 @@ pub const Server = struct {
         switch (response) {
             .response => |res| {
                 client.response_state.status_code = res.status_code;
-                client.response_state.headers = try dupeHeaders(self.root_allocator, res.headers);
+                client.response_state.headers = res.headers;
 
                 try client.startWritingResponse(data.items.len);
                 try client.write_buffer.appendSlice(data.items);
@@ -686,7 +686,7 @@ pub const Server = struct {
             },
             .send_file => |res| {
                 client.response_state.status_code = res.status_code;
-                client.response_state.headers = try dupeHeaders(self.root_allocator, res.headers);
+                client.response_state.headers = res.headers;
                 client.response_state.file.path = try client.gpa.dupeZ(u8, res.path);
 
                 if (self.registered_files.get(client.response_state.file.path)) |registered_file| {
@@ -839,19 +839,4 @@ fn parseRequest(raw_buffer: []const u8) !?ParseRequestResult {
         },
         .consumed = @intCast(usize, fbs.pos),
     };
-}
-
-fn dupeHeaders(alloc: std.mem.Allocator, headers: []const http.Header) ![]const http.Header {
-    var result = try std.ArrayListUnmanaged(http.Header).initCapacity(alloc, headers.len);
-    errdefer result.deinit(alloc);
-    for (headers) |item| {
-        const name = try alloc.dupe(u8, item.name);
-        errdefer alloc.free(name);
-        const value = try alloc.dupe(u8, item.value);
-        result.appendAssumeCapacity(.{
-            .name = name,
-            .value = value,
-        });
-    }
-    return try result.toOwnedSlice(alloc);
 }
